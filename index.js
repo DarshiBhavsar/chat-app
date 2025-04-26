@@ -25,7 +25,7 @@ const io = new Server(server, {
     cors: {
         // origin: 'http://localhost:5173',
         pingTimeout: 10000,
-        origin: 'https://socket-application.netlify.app/',
+        origin: 'https://socket-application.netlify.app',
         methods: ['GET', 'POST']
     }
 });
