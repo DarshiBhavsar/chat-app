@@ -10,7 +10,12 @@ exports.sendMessage = async (req, res) => {
             message,
             senderId,
             recipientId: isPrivate ? recipientId : undefined,  // Only add recipientId for private messages
-            time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }).toLowerCase(),
+            time: new Date().toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+                timeZone: 'Asia/Kolkata'
+            }).toLowerCase(),
             isPrivate
         });
 
