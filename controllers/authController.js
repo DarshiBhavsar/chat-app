@@ -42,10 +42,10 @@ exports.loginUser = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
     try {
         const users = await User.find({}, '-password');
-        // Transform the users to match the socket format
+        
         const transformedUsers = users.map(user => ({
-            id: user._id,  // Map _id to id
-            name: user.username  // Map username to name
+            id: user._id,  
+            name: user.username  
         }));
         res.json(transformedUsers);
     } catch (error) {
