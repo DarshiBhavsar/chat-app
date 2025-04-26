@@ -10,7 +10,7 @@ exports.sendMessage = async (req, res) => {
             message,
             senderId,
             recipientId: isPrivate ? recipientId : undefined,  // Only add recipientId for private messages
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            time: time,
             isPrivate
         });
 
@@ -31,7 +31,7 @@ exports.getMessages = async (req, res) => {
         let messages;
 
         if (isPrivate === 'true' && recipientId) {
-            
+
             messages = await Message.find({
                 $or: [
                     { senderId, recipientId },
@@ -39,7 +39,7 @@ exports.getMessages = async (req, res) => {
                 ]
             });
         } else {
-            
+
             messages = await Message.find({ isPrivate: true });
         }
 
