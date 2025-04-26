@@ -24,14 +24,14 @@ app.use('/api/messages', messageRoutes);
 const io = new Server(server, {
     cors: {
         // origin: 'http://localhost:5173',
+        pingTimeout: 10000,
         origin: 'https://socket-application.netlify.app/',
         methods: ['GET', 'POST']
     }
 });
 
-// Maps to track users
-const onlineUsers = new Map(); // socketId -> user
-const userSocketMap = new Map(); // userId -> socketId
+const onlineUsers = new Map();
+const userSocketMap = new Map();
 
 io.on('connection', socket => {
     console.log(`✅ Socket connected: ${socket.id}`);
@@ -40,18 +40,16 @@ io.on('connection', socket => {
         try {
             const user = jwt.decode(token);
 
-            // Store user in onlineUsers map
             onlineUsers.set(socket.id, { id: user.id, name: user.username });
 
-            // Store socket ID by user ID for easy lookup
             userSocketMap.set(user.id, socket.id);
 
             console.log(`✅ User joined: ${user.username} (UserID: ${user.id}, SocketID: ${socket.id})`);
 
-            // Broadcast to all clients that user has joined
+
             io.emit('user-joined-broadcast', { id: user.id, name: user.username });
 
-            // Send updated online users list
+
             io.emit('online-users', Array.from(onlineUsers.values()));
         } catch (error) {
             console.error('Error processing user-joined event:', error);
@@ -71,7 +69,7 @@ io.on('connection', socket => {
             console.log(`Private message sent to ${recipientId} (Socket: ${recipientSocketId})`);
         } else {
             console.log(`Recipient ${recipientId} is offline or not found`);
-            // Could store the message for delivery when user comes online
+
         }
     });
 
@@ -79,16 +77,16 @@ io.on('connection', socket => {
         socket.broadcast.emit('received-message', message);
     });
 
-    // Fixed typing events to match frontend format
+
     socket.on('typing', ({ from, to }) => {
         if (to) {
-            // Private typing notification
+
             const recipientSocketId = userSocketMap.get(to);
             if (recipientSocketId) {
                 io.to(recipientSocketId).emit('user-typing', { from, to });
             }
         } else {
-            // Global typing notification
+
             socket.broadcast.emit('user-typing', { from });
         }
     });
@@ -101,16 +99,30 @@ io.on('connection', socket => {
                 io.to(recipientSocketId).emit('user-stop-typing', { from, to });
             }
         } else {
-            // Global stop typing notification
+
             socket.broadcast.emit('user-stop-typing', { from });
         }
     });
 
-    socket.on('user-left', ({ userId }) => {
+    socket.on('user-left', ({ userId }, callback) => {
         if (userId) {
+
+            const socketId = userSocketMap.get(userId);
+            if (socketId) {
+                onlineUsers.delete(socketId);
+            }
             userSocketMap.delete(userId);
+
+
             io.emit('user-left-broadcast', userId);
+
+
+            io.emit('online-users', Array.from(onlineUsers.values()));
+
             console.log(`User explicitly left: ${userId}`);
+
+
+            if (callback) callback();
         }
     });
 
@@ -120,10 +132,10 @@ io.on('connection', socket => {
             onlineUsers.delete(socket.id);
             userSocketMap.delete(user.id);
 
-            // Notify all clients that user has left
+
             io.emit('user-left-broadcast', user.id);
 
-            // Send updated online users list
+
             io.emit('online-users', Array.from(onlineUsers.values()));
 
             console.log(`❌ User disconnected: ${user.name} (ID: ${user.id})`);
@@ -131,7 +143,7 @@ io.on('connection', socket => {
     });
 });
 
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

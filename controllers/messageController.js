@@ -1,6 +1,6 @@
 const Message = require('../models/message');
 
-// Send a new message (either private or global)
+
 exports.sendMessage = async (req, res) => {
     try {
         const { user, message, senderId, recipientId, isPrivate } = req.body;
@@ -31,7 +31,7 @@ exports.getMessages = async (req, res) => {
         let messages;
 
         if (isPrivate === 'true' && recipientId) {
-            // Private messages between two users
+            
             messages = await Message.find({
                 $or: [
                     { senderId, recipientId },
@@ -39,7 +39,7 @@ exports.getMessages = async (req, res) => {
                 ]
             });
         } else {
-            // Public messages (global)
+            
             messages = await Message.find({ isPrivate: true });
         }
 

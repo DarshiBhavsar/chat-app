@@ -5,8 +5,8 @@ const messageSchema = new mongoose.Schema({
     senderId: { type: String, required: true },
     message: { type: String, required: true },
     time: { type: String, required: true },
-    recipientId: { type: String, required: true },  // For private messages
-    isPrivate: { type: Boolean, default: true }  // To distinguish between private and global messages
+    recipientId: { type: String, required: true },  
+    isPrivate: { type: Boolean, default: true } 
 });
 
 const Message = mongoose.model('Message', messageSchema);
