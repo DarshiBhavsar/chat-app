@@ -1,12 +1,18 @@
 const mongoose = require('mongoose');
 
 const messageSchema = new mongoose.Schema({
-    user: { type: String, required: true },
-    senderId: { type: String, required: true },
-    message: { type: String, required: true },
+    user: { type: String, },
+    senderId: { type: String, },
+    message: { type: String },
     time: { type: String, required: true },
-    recipientId: { type: String, required: true },  
-    isPrivate: { type: Boolean, default: true } 
+    recipientId: { type: String, },
+    image: [{ type: String }],
+    groupId: { type: String },
+    isPrivate: { type: Boolean, default: true },
+    createdAt: {
+        type: Date,
+        default: Date.now
+    }
 });
 
 const Message = mongoose.model('Message', messageSchema);
