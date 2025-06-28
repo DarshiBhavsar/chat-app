@@ -32,7 +32,7 @@ exports.loginUser = async (req, res) => {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
 
-        const token = jwt.sign({ id: user._id, username: user.username }, 'secretKey', { expiresIn: '1h' });
+        const token = jwt.sign({ id: user._id, username: user.username }, 'secretKey', { expiresIn: '24h' });
         res.status(200).json({ message: 'Logged in successfully', token });
     } catch (error) {
         res.status(500).json({ message: 'Server Error', error });
@@ -42,10 +42,10 @@ exports.loginUser = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
     try {
         const users = await User.find({}, '-password');
-        
+
         const transformedUsers = users.map(user => ({
-            id: user._id,  
-            name: user.username  
+            id: user._id,
+            name: user.username
         }));
         res.json(transformedUsers);
     } catch (error) {
