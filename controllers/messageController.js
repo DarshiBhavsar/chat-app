@@ -3,7 +3,7 @@ const Message = require('../models/message');
 
 exports.sendMessage = async (req, res) => {
     try {
-        const { user, message, senderId, recipientId, isPrivate, image = [] } = req.body;
+        const { user, message, senderId, recipientId, isPrivate, image = [], documents = [] } = req.body;
 
         const newMessage = new Message({
             user,
@@ -11,6 +11,7 @@ exports.sendMessage = async (req, res) => {
             senderId,
             recipientId,
             image,
+            documents,
             time: new Date().toLocaleTimeString('en-US', {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -31,7 +32,7 @@ exports.sendMessage = async (req, res) => {
 
 exports.sendGroupMessage = async (req, res) => {
     try {
-        const { user, message, senderId, groupId, image } = req.body;
+        const { user, message, senderId, groupId, image, documents } = req.body;
 
         if (!groupId) {
             return res.status(400).json({ message: 'groupId is required for group messages' });
@@ -50,6 +51,7 @@ exports.sendGroupMessage = async (req, res) => {
             senderId,
             groupId,
             image,
+            documents,
             time,
             isPrivate: true
         });

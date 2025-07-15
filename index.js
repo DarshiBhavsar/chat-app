@@ -26,7 +26,8 @@ app.use('/api/messages', messageRoutes);
 
 const io = new Server(server, {
     cors: {
-        origin: 'https://chat-application-reactjs-nodejs.netlify.app',
+        // origin: 'https://chat-application-reactjs-nodejs.netlify.app',
+        origin: 'http://localhost:5173',
         pingTimeout: 10000,
         methods: ['GET', 'POST']
     }
@@ -34,7 +35,11 @@ const io = new Server(server, {
 
 const onlineUsers = new Map();
 const userSocketMap = new Map();
+// Add group call tracking
+const activeGroupCalls = new Map(); // groupId -> { participants: Set, callType: 'voice'|'video' }
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/documents', express.static('uploads/documents'));
 
 io.on('connection', socket => {
     console.log(`✅ Socket connected: ${socket.id}`);
@@ -223,6 +228,7 @@ io.on('connection', socket => {
         console.log(`🟡 Broadcasted group-stop-typing to group ${groupId} from user ${userName}`);
     });
 
+    // Individual call handlers (existing)
     socket.on('call-request', ({ to, from, fromName, type, offer }) => {
         console.log(`📞 Call request from ${fromName} to ${to} (Type: ${type})`);
 
@@ -271,7 +277,6 @@ io.on('connection', socket => {
         io.to(to).emit('call-failed', { reason, message });
     });
 
-
     socket.on('call-declined', ({ to }) => {
         console.log(`❌ Call declined by socket ${socket.id}, notifying ${to}`);
 
@@ -305,11 +310,262 @@ io.on('connection', socket => {
         }
     });
 
+    // ========== GROUP CALL HANDLERS ==========
+
+    // Group call request - initiator starts a group call
+
+    socket.on('group-call-request', ({ groupId, groupName, members, from, fromName, type }) => {
+        console.log(`📞 Group call request from ${fromName} to group ${groupName} (Type: ${type})`);
+        console.log('📞 Members array received:', members);
+        console.log('📞 Current online users:', Array.from(onlineUsers.values()));
+        console.log('📞 Current user socket map:', Array.from(userSocketMap.entries()));
+
+        // Initialize group call tracking
+        if (!activeGroupCalls.has(groupId)) {
+            activeGroupCalls.set(groupId, {
+                participants: new Set([from]),
+                callType: type,
+                initiator: from
+            });
+        }
+
+        // ENHANCED VALIDATION: Clean and validate members array
+        if (!members || !Array.isArray(members)) {
+            console.error('❌ Invalid members array:', members);
+            socket.emit('group-call-error', {
+                message: 'No group members found. Please refresh and try again.'
+            });
+            return;
+        }
+
+        // Clean the members array - remove null/undefined values and extract IDs
+        const cleanMembers = members
+            .map(member => {
+                // Handle different member formats
+                if (typeof member === 'string') return member; // Already an ID
+                if (typeof member === 'object' && member?.id) return member.id; // User object
+                if (typeof member === 'object' && member?._id) return member._id; // MongoDB object
+                return null; // Invalid member
+            })
+            .filter(memberId => memberId != null && memberId !== ''); // Remove null/undefined/empty
+
+        console.log('📞 Cleaned members array:', cleanMembers);
+
+        if (cleanMembers.length === 0) {
+            console.error('❌ No valid members found after cleaning');
+            socket.emit('group-call-error', {
+                message: 'No valid group members found. Please check the group configuration.'
+            });
+            return;
+        }
+
+        console.log(`📞 Processing ${cleanMembers.length} members for group call`);
+
+        // Notify all group members except the initiator
+        let notificationsSent = 0;
+        const offlineMembers = [];
+
+        cleanMembers.forEach((memberId, index) => {
+            console.log(`📞 Processing member ${index + 1}/${cleanMembers.length}:`, {
+                memberId,
+                isInitiator: memberId === from
+            });
+
+            // Skip the initiator
+            if (memberId === from) {
+                console.log(`📞 Skipping member: ${memberId} (is initiator)`);
+                return;
+            }
+
+            const memberSocketId = userSocketMap.get(memberId);
+            if (memberSocketId) {
+                io.to(memberSocketId).emit('group-call-request', {
+                    groupId,
+                    groupName,
+                    members: cleanMembers, // Send cleaned members array
+                    from,
+                    fromName,
+                    type
+                });
+                notificationsSent++;
+                console.log(`📞 ✅ Group call request sent to ${memberId} (Socket: ${memberSocketId})`);
+            } else {
+                offlineMembers.push(memberId);
+                console.log(`📞 ❌ Group member ${memberId} is offline or not found in userSocketMap`);
+            }
+        });
+
+        console.log(`📞 Group call notifications sent: ${notificationsSent}/${cleanMembers.length - 1} (excluding initiator)`);
+
+        if (offlineMembers.length > 0) {
+            console.log(`📞 Offline members: ${offlineMembers.join(', ')}`);
+        }
+
+        // Enhanced feedback to initiator
+        if (notificationsSent === 0) {
+            socket.emit('group-call-error', {
+                message: 'No group members are currently online.'
+            });
+        } else if (offlineMembers.length > 0) {
+            // Inform about offline members but continue with online ones
+            socket.emit('group-call-partial', {
+                message: `${offlineMembers.length} member(s) are offline and won't receive the call.`,
+                onlineCount: notificationsSent,
+                offlineCount: offlineMembers.length
+            });
+        }
+    });
+    // User joins a group call
+    socket.on('group-call-join', ({ groupId, userId, userName }) => {
+        console.log(`✅ ${userName} joining group call: ${groupId}`);
+
+        const groupCall = activeGroupCalls.get(groupId);
+        if (!groupCall) {
+            console.log(`❌ Group call ${groupId} not found`);
+            socket.emit('group-call-error', { message: 'Group call not found' });
+            return;
+        }
+
+        // Add user to participants
+        groupCall.participants.add(userId);
+
+        // Join the group call room
+        const groupCallRoom = `group-call-${groupId}`;
+        socket.join(groupCallRoom);
+
+        // Get current participants info
+        const participants = Array.from(groupCall.participants).map(participantId => {
+            const user = Array.from(onlineUsers.values()).find(u => u.id === participantId);
+            return {
+                id: participantId,
+                name: user ? user.name : 'Unknown'
+            };
+        });
+
+        // Notify the joining user about existing participants
+        socket.emit('group-call-joined', {
+            groupId,
+            participants: participants.filter(p => p.id !== userId) // Exclude self
+        });
+
+        // Notify existing participants about the new joiner
+        socket.to(groupCallRoom).emit('group-participant-joined', {
+            userId,
+            userName
+        });
+
+        console.log(`✅ ${userName} joined group call ${groupId}. Total participants: ${groupCall.participants.size}`);
+    });
+
+    // Group call offer (WebRTC signaling)
+    socket.on('group-call-offer', ({ groupId, to, from, offer }) => {
+        console.log(`📨 Group call offer from ${from} to ${to} in group ${groupId}`);
+
+        const recipientSocketId = userSocketMap.get(to);
+        if (recipientSocketId) {
+            const senderUser = Array.from(onlineUsers.values()).find(u => u.id === from);
+            io.to(recipientSocketId).emit('group-call-offer', {
+                from,
+                fromName: senderUser ? senderUser.name : 'Unknown',
+                offer
+            });
+            console.log(`📨 Group call offer relayed to ${to}`);
+        }
+    });
+
+    // Group call answer (WebRTC signaling)
+    socket.on('group-call-answer', ({ groupId, to, from, answer }) => {
+        console.log(`📨 Group call answer from ${from} to ${to} in group ${groupId}`);
+
+        const recipientSocketId = userSocketMap.get(to);
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('group-call-answer', {
+                from,
+                answer
+            });
+            console.log(`📨 Group call answer relayed to ${to}`);
+        }
+    });
+
+    // Group call ICE candidate (WebRTC signaling)
+    socket.on('group-ice-candidate', ({ groupId, to, from, candidate }) => {
+        console.log(`🧊 Group ICE candidate from ${from} to ${to} in group ${groupId}`);
+
+        const recipientSocketId = userSocketMap.get(to);
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('group-ice-candidate', {
+                from,
+                candidate
+            });
+            console.log(`🧊 Group ICE candidate relayed to ${to}`);
+        }
+    });
+
+    // User declines group call
+    socket.on('group-call-declined', ({ groupId, userId }) => {
+        console.log(`❌ ${userId} declined group call: ${groupId}`);
+
+        const groupCall = activeGroupCalls.get(groupId);
+        if (groupCall) {
+            groupCall.participants.delete(userId);
+
+            // Notify other participants
+            const groupCallRoom = `group-call-${groupId}`;
+            socket.to(groupCallRoom).emit('group-participant-declined', {
+                userId
+            });
+        }
+    });
+
+    // User leaves group call
+    socket.on('group-call-left', ({ groupId, userId }) => {
+        console.log(`👋 ${userId} left group call: ${groupId}`);
+
+        const groupCall = activeGroupCalls.get(groupId);
+        if (groupCall) {
+            groupCall.participants.delete(userId);
+
+            // Leave the group call room
+            const groupCallRoom = `group-call-${groupId}`;
+            socket.leave(groupCallRoom);
+
+            // Notify other participants
+            socket.to(groupCallRoom).emit('group-participant-left', {
+                userId
+            });
+
+            // If no participants left, clean up the group call
+            if (groupCall.participants.size === 0) {
+                activeGroupCalls.delete(groupId);
+                console.log(`🧹 Cleaned up empty group call: ${groupId}`);
+            } else {
+                console.log(`👋 ${userId} left group call ${groupId}. Remaining participants: ${groupCall.participants.size}`);
+            }
+        }
+    });
+
+    // Group call ended by initiator
+    socket.on('group-call-ended', ({ groupId }) => {
+        console.log(`🔚 Group call ended: ${groupId}`);
+
+        const groupCall = activeGroupCalls.get(groupId);
+        if (groupCall) {
+            // Notify all participants
+            const groupCallRoom = `group-call-${groupId}`;
+            io.to(groupCallRoom).emit('group-call-ended', { groupId });
+
+            // Clean up
+            activeGroupCalls.delete(groupId);
+            console.log(`🧹 Group call ${groupId} ended and cleaned up`);
+        }
+    });
+
     socket.on('disconnect', () => {
         if (onlineUsers.has(socket.id)) {
             const user = onlineUsers.get(socket.id);
             const roomsArray = Array.from(socket.rooms);
 
+            // Clean up typing indicators
             roomsArray.forEach(roomId => {
                 if (roomId !== socket.id) {
                     socket.to(roomId).emit('group-stop-typing', {
@@ -318,6 +574,27 @@ io.on('connection', socket => {
                         username: user.name
                     });
                     console.log(`🟡 Cleaned up typing indicator for user ${user.name} in group ${roomId}`);
+                }
+            });
+
+            // Clean up group calls
+            activeGroupCalls.forEach((groupCall, groupId) => {
+                if (groupCall.participants.has(user.id)) {
+                    groupCall.participants.delete(user.id);
+
+                    // Notify other participants
+                    const groupCallRoom = `group-call-${groupId}`;
+                    socket.to(groupCallRoom).emit('group-participant-left', {
+                        userId: user.id
+                    });
+
+                    // If no participants left, clean up the group call
+                    if (groupCall.participants.size === 0) {
+                        activeGroupCalls.delete(groupId);
+                        console.log(`🧹 Cleaned up empty group call: ${groupId} after user disconnect`);
+                    }
+
+                    console.log(`👋 ${user.name} disconnected from group call ${groupId}`);
                 }
             });
 
@@ -332,7 +609,7 @@ io.on('connection', socket => {
     });
 });
 
-const PORT = process.env.PORT || 1000;
+const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
