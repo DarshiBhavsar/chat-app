@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const upload = require('../middleware/multerConfig');
+const uploadDocument = require('../middleware/uploadDocument');
 const { sendMessage, getMessages, sendGroupMessage, getGroupMessages } = require('../controllers/messageController');
 
 router.post('/send', sendMessage);
@@ -12,6 +13,16 @@ router.post('/upload-image', upload.array('image'), (req, res) => {
 
     const imageUrls = req.files.map(file => `/uploads/${file.filename}`);
     res.status(200).json({ imageUrls });
+});
+
+router.post('/upload-document', uploadDocument.array('document', 5), (req, res) => {
+    if (!req.files || req.files.length === 0) {
+        return res.status(400).json({ message: 'No document uploaded' });
+    }
+
+    // Return correct path that matches where files are stored
+    const documentUrls = req.files.map(file => `/documents/${file.filename}`);
+    res.status(200).json({ documentUrls });
 });
 
 

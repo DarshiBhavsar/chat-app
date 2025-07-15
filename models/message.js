@@ -7,6 +7,7 @@ const messageSchema = new mongoose.Schema({
     time: { type: String, required: true },
     recipientId: { type: String, },
     image: [{ type: String }],
+    documents: [{ type: String }],
     groupId: { type: String },
     isPrivate: { type: Boolean, default: true },
     createdAt: {
