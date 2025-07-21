@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const upload = require('../middleware/multerConfig');
-// const verifyToken = require('../middleware/authMiddleware');
+const verifyToken = require('../middleware/authMiddleware');
 const groupController = require('../controllers/groupController');
 
-router.post('/create', groupController.createGroup);
+router.post('/create', verifyToken, groupController.createGroup);
 
 router.post('/upload-image', upload.array('image'), (req, res) => {
     if (!req.files || req.files.length === 0) {
@@ -18,10 +18,19 @@ router.post('/upload-image', upload.array('image'), (req, res) => {
 
 router.get('/all', groupController.getAllGroups);
 
-router.get('/my-groups/:userId', groupController.getUserGroups)
+router.get('/my-groups/:userId', verifyToken, groupController.getUserGroups);
 
-router.post('/:groupId/members', groupController.addUserToGroup);
+// Leave a group
+router.post('/leave/:groupId', verifyToken, groupController.leaveGroup);
 
-router.delete('/:groupId/members/:userId', groupController.removeUserFromGroup);
+// Add member to group
+router.post('/add-member/:groupId', verifyToken, groupController.addMemberToGroup);
+
+// Remove member from group
+router.post('/remove-member/:groupId', verifyToken, groupController.removeMemberFromGroup);
+
+// Legacy routes (keeping for backward compatibility)
+router.post('/:groupId/members', verifyToken, groupController.addUserToGroup);
+router.delete('/:groupId/members/:userId', verifyToken, groupController.removeUserFromGroup);
 
 module.exports = router;
