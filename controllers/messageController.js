@@ -1,9 +1,9 @@
 const Message = require('../models/message');
 
-
 exports.sendMessage = async (req, res) => {
     try {
-        const { user, message, senderId, recipientId, isPrivate, image = [], documents = [] } = req.body;
+        const { user, message, senderId, recipientId, isPrivate, image = [], documents = [], audio = [],
+            audioDuration, video = [] } = req.body;
 
         const newMessage = new Message({
             user,
@@ -12,6 +12,9 @@ exports.sendMessage = async (req, res) => {
             recipientId,
             image,
             documents,
+            audio,
+            audioDuration,
+            video,
             time: new Date().toLocaleTimeString('en-US', {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -29,10 +32,10 @@ exports.sendMessage = async (req, res) => {
     }
 };
 
-
 exports.sendGroupMessage = async (req, res) => {
     try {
-        const { user, message, senderId, groupId, image, documents } = req.body;
+        const { user, message, senderId, groupId, image, documents, audio = [],
+            audioDuration, video = [] } = req.body;
 
         if (!groupId) {
             return res.status(400).json({ message: 'groupId is required for group messages' });
@@ -53,6 +56,9 @@ exports.sendGroupMessage = async (req, res) => {
             image,
             documents,
             time,
+            audio,
+            video,
+            audioDuration,
             isPrivate: true
         });
 
@@ -71,7 +77,6 @@ exports.getMessages = async (req, res) => {
         let messages;
 
         if (isPrivate === 'true' && recipientId) {
-
             messages = await Message.find({
                 $or: [
                     { senderId, recipientId },
@@ -79,7 +84,6 @@ exports.getMessages = async (req, res) => {
                 ]
             });
         } else {
-
             messages = await Message.find({ isPrivate: true });
         }
 
@@ -102,4 +106,70 @@ exports.getGroupMessages = async (req, res) => {
     }
 };
 
+// New delete message controller
+exports.deleteMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { senderId } = req.body; // For authorization
 
+        // Find the message first
+        const message = await Message.findById(messageId);
+
+        if (!message) {
+            return res.status(404).json({ message: 'Message not found' });
+        }
+
+        // Check if the user is authorized to delete this message
+        if (message.senderId !== senderId) {
+            return res.status(403).json({ message: 'Not authorized to delete this message' });
+        }
+
+        // Delete the message
+        await Message.findByIdAndDelete(messageId);
+
+        return res.status(200).json({
+            message: 'Message deleted successfully',
+            deletedMessageId: messageId
+        });
+    } catch (error) {
+        console.error('Delete message error:', error);
+        return res.status(500).json({ message: 'Failed to delete message' });
+    }
+};
+
+// Alternative: Soft delete (marks as deleted but doesn't remove from DB)
+exports.softDeleteMessage = async (req, res) => {
+    try {
+        const { messageId } = req.params;
+        const { senderId } = req.body;
+
+        const message = await Message.findById(messageId);
+
+        if (!message) {
+            return res.status(404).json({ message: 'Message not found' });
+        }
+
+        if (message.senderId !== senderId) {
+            return res.status(403).json({ message: 'Not authorized to delete this message' });
+        }
+
+        // Mark as deleted instead of removing
+        const updatedMessage = await Message.findByIdAndUpdate(
+            messageId,
+            {
+                message: 'This message was deleted',
+                isDeleted: true,
+                deletedAt: new Date()
+            },
+            { new: true }
+        );
+
+        return res.status(200).json({
+            message: 'Message deleted successfully',
+            updatedMessage
+        });
+    } catch (error) {
+        console.error('Soft delete message error:', error);
+        return res.status(500).json({ message: 'Failed to delete message' });
+    }
+};
