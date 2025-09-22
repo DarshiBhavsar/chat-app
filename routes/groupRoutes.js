@@ -33,4 +33,8 @@ router.post('/remove-member/:groupId', verifyToken, groupController.removeMember
 router.post('/:groupId/members', verifyToken, groupController.addUserToGroup);
 router.delete('/:groupId/members/:userId', verifyToken, groupController.removeUserFromGroup);
 
+router.put('/:groupId/profile-picture', verifyToken, groupController.updateGroupProfilePicture)
+
+router.put('/update/:groupId', verifyToken, groupController.updateGroup);
+
 module.exports = router;
