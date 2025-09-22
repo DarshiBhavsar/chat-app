@@ -7,7 +7,8 @@ const path = require('path');
 const getBaseUrl = (req) => {
     // In development
     if (process.env.NODE_ENV !== 'production') {
-        return 'http://localhost:5000';
+        // return 'http://localhost:5000';
+        return 'https://socket-application-react-nodejs.onrender.com';
     }
     // In production, use the request protocol and host
     return `${req.protocol}://${req.get('host')}`;
