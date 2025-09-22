@@ -1,6 +1,16 @@
 const User = require('../models/user');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
+const path = require('path');
+
+const emitStatusFeedRefresh = async (io, userId, refreshData) => {
+    try {
+        io.to(userId).emit('status_feed_refresh', refreshData);
+        console.log(`📱 Status feed refresh sent to user ${userId}:`, refreshData.reason);
+    } catch (error) {
+        console.error('❌ Error emitting status feed refresh:', error);
+    }
+};
 
 exports.registerUser = async (req, res) => {
     try {
@@ -32,7 +42,7 @@ exports.loginUser = async (req, res) => {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
 
-        const token = jwt.sign({ id: user._id, username: user.username }, 'secretKey', { expiresIn: '24h' });
+        const token = jwt.sign({ id: user._id, username: user.username, email: user.email }, 'secretKey', { expiresIn: '24h' });
         res.status(200).json({ message: 'Logged in successfully', token });
     } catch (error) {
         res.status(500).json({ message: 'Server Error', error });
@@ -43,8 +53,11 @@ exports.getAllUsers = async (req, res) => {
     try {
         const currentUserId = req.user?.id;
 
-        // Get all users except the current user
-        const users = await User.find({ _id: { $ne: currentUserId } }, '-password -blockedUsers -blockedBy');
+        // Get all users except the current user, including profilePicture
+        const users = await User.find(
+            { _id: { $ne: currentUserId } },
+            '-password -blockedUsers -blockedBy'
+        );
 
         // If we have a current user, filter out blocked users
         if (currentUserId) {
@@ -58,8 +71,10 @@ exports.getAllUsers = async (req, res) => {
             const transformedUsers = filteredUsers.map(user => ({
                 id: user._id,
                 name: user.username,
+                email: user.email,
                 isOnline: user.isOnline,
-                lastSeen: user.lastSeen
+                lastSeen: user.lastSeen,
+                profilePicture: user.profilePicture ? `/api/uploads/${path.basename(user.profilePicture)}` : null
             }));
 
             res.json(transformedUsers);
@@ -68,8 +83,10 @@ exports.getAllUsers = async (req, res) => {
             const transformedUsers = users.map(user => ({
                 id: user._id,
                 name: user.username,
+                email: user.email,
                 isOnline: user.isOnline,
-                lastSeen: user.lastSeen
+                lastSeen: user.lastSeen,
+                profilePicture: user.profilePicture ? `/api/uploads/${path.basename(user.profilePicture)}` : null
             }));
             res.json(transformedUsers);
         }
@@ -79,6 +96,7 @@ exports.getAllUsers = async (req, res) => {
     }
 };
 
+// UPDATED blockUser function with status refresh
 exports.blockUser = async (req, res) => {
     try {
         const { userId } = req.params;
@@ -88,15 +106,50 @@ exports.blockUser = async (req, res) => {
             return res.status(400).json({ message: 'Cannot block yourself' });
         }
 
-        // Add the user to the blocker's blocked list
+        const blocker = await User.findById(blockerId);
+        const blockedUser = await User.findById(userId);
+
+        if (!blockedUser || !blocker) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
         await User.findByIdAndUpdate(blockerId, {
-            $addToSet: { blockedUsers: userId }
+            $addToSet: { blockedUsers: userId },
+            $pull: { friends: userId }
         });
 
-        // Add the blocker to the user's blockedBy list
         await User.findByIdAndUpdate(userId, {
-            $addToSet: { blockedBy: blockerId }
+            $addToSet: { blockedBy: blockerId },
+            $pull: { friends: blockerId }
         });
+
+        const io = req.app.get('io');
+        if (io) {
+            // Standard blocking events
+            io.emit('user_blocked_and_removed', {
+                blockedUserId: userId,
+                blockerUserId: blockerId,
+                blockerName: blocker.username
+            });
+
+            io.emit('user_block_success', {
+                blockedUserId: userId,
+                blockerUserId: blockerId
+            });
+
+            // NEW: Trigger status refresh for both users
+            await emitStatusFeedRefresh(io, blockerId, {
+                reason: 'user_blocked',
+                blockedUserId: userId,
+                blockedUserName: blockedUser.username
+            });
+
+            await emitStatusFeedRefresh(io, userId, {
+                reason: 'user_blocked_by',
+                blockerUserId: blockerId,
+                blockerUserName: blocker.username
+            });
+        }
 
         res.json({ message: 'User blocked successfully' });
     } catch (error) {
@@ -105,20 +158,39 @@ exports.blockUser = async (req, res) => {
     }
 };
 
+
+// UPDATED unblockUser function with status refresh  
 exports.unblockUser = async (req, res) => {
     try {
         const { userId } = req.params;
         const unblockerId = req.user.id;
 
-        // Remove the user from the unblocker's blocked list
+        const unblocker = await User.findById(unblockerId);
+        const unblockedUser = await User.findById(userId);
+
+        if (!unblockedUser || !unblocker) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
         await User.findByIdAndUpdate(unblockerId, {
             $pull: { blockedUsers: userId }
         });
 
-        // Remove the unblocker from the user's blockedBy list
         await User.findByIdAndUpdate(userId, {
             $pull: { blockedBy: unblockerId }
         });
+
+        const io = req.app.get('io');
+        if (io) {
+            io.emit('user_unblocked', {
+                unblockedUserId: userId,
+                unblockerUserId: unblockerId,
+                unblockerName: unblocker.username
+            });
+
+            // Note: No automatic status refresh on unblock
+            // Users need to be friends again to see each other's statuses
+        }
 
         res.json({ message: 'User unblocked successfully' });
     } catch (error) {
@@ -131,7 +203,7 @@ exports.getBlockedUsers = async (req, res) => {
     try {
         const userId = req.user.id;
 
-        const user = await User.findById(userId).populate('blockedUsers', 'username email');
+        const user = await User.findById(userId).populate('blockedUsers', 'username email profilePicture');
 
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
@@ -140,12 +212,67 @@ exports.getBlockedUsers = async (req, res) => {
         const blockedUsers = user.blockedUsers.map(blockedUser => ({
             id: blockedUser._id,
             name: blockedUser.username,
-            email: blockedUser.email
+            email: blockedUser.email,
+            profilePicture: blockedUser.profilePicture ? `/api/uploads/${path.basename(blockedUser.profilePicture)}` : null
         }));
 
         res.json(blockedUsers);
     } catch (error) {
         console.error('Error fetching blocked users:', error);
         res.status(500).json({ message: 'Server Error', error });
+    }
+};
+
+exports.getCurrentUser = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        const user = await User.findById(userId).select('username isOnline lastSeen profilePicture');
+
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        res.json({
+            id: user._id,
+            username: user.username,
+            email: user.email,
+            isOnline: user.isOnline,
+            lastSeen: user.lastSeen,
+            profilePicture: user.profilePicture ? `/api/uploads/${path.basename(user.profilePicture)}` : null
+        });
+    } catch (error) {
+        console.error('Error fetching current user:', error);
+        res.status(500).json({ message: 'Server Error', error });
+    }
+};
+
+exports.updateUser = async (req, res) => {
+    const userId = req.params.id;
+    const { username, email, profilePicture, lastSeen, isOnline } = req.body;
+
+    try {
+        // Build the update object dynamically
+        const updateFields = {};
+        if (username !== undefined) updateFields.username = username;
+        if (email !== undefined) updateFields.email = email;
+        if (profilePicture !== undefined) updateFields.profilePicture = profilePicture;
+        if (lastSeen !== undefined) updateFields.lastSeen = lastSeen;
+        if (isOnline !== undefined) updateFields.isOnline = isOnline;
+
+        const updatedUser = await User.findByIdAndUpdate(
+            userId,
+            { $set: updateFields },
+            { new: true }
+        ).select('-password');
+
+        if (!updatedUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        res.status(200).json({
+            message: 'User updated successfully',
+            user: updatedUser
+        });
+    } catch (error) {
+        console.error('Error updating user:', error);
+        res.status(500).json({ message: 'Internal server error' });
     }
 };

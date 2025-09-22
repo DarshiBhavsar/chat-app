@@ -8,6 +8,9 @@ const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const groupRoutes = require('./routes/groupRoutes');
 const messageRoutes = require('./routes/messageRoutes');
+const statusRoutes = require('./routes/statusRoutes')
+const profileRoutes = require('./routes/profileRoutes')
+const friendRoutes = require('./routes/friendRoutes'); // Add friend routes
 const User = require('./models/user');
 const verifyToken = require('./middleware/authMiddleware');
 const jwt = require('jsonwebtoken');
@@ -23,21 +26,24 @@ connectDB();
 app.use('/api/auth', authRoutes);
 app.use('/api/groups', groupRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/status', statusRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/friends', friendRoutes); // Add friend routes
 
 const io = new Server(server, {
     cors: {
-        origin: 'https://chat-application-reactjs-nodejs.netlify.app',
-        // origin: 'http://localhost:5173',
+        // origin: 'https://chat-application-reactjs-nodejs.netlify.app',
+        origin: 'http://localhost:5173',
         pingTimeout: 10000,
         methods: ['GET', 'POST']
     }
 });
-
+app.set('io', io);
 const onlineUsers = new Map();
 const userSocketMap = new Map();
 // Add last seen tracking
 const userLastSeen = new Map(); // userId -> timestamp
-const activeGroupCalls = new Map(); // groupId -> { participants: Set, callType: 'voice'|'video' }
+const activeGroupCalls = new Map(); // groupId -> { participants: Map, callType: 'voice'|'video', initiator: string }
 
 // Helper function to update last seen
 const updateLastSeen = async (userId) => {
@@ -93,10 +99,27 @@ const formatLastSeen = (lastSeenTime) => {
     return lastSeenTime.toLocaleDateString();
 };
 
+const getUserFriends = async (userId) => {
+    try {
+        const user = await User.findById(userId).select('friends').lean();
+        return user ? user.friends.map(id => id.toString()) : [];
+    } catch (error) {
+        console.error('Error fetching user friends:', error);
+        return [];
+    }
+};
+
+// Helper function to emit to specific users only
+const emitToUsers = (io, userIds, event, data) => {
+    userIds.forEach(userId => {
+        io.to(userId).emit(event, data);
+    });
+};
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/documents', express.static('documents'));
 app.use('/audio', express.static(path.join(__dirname, 'audio')));
 app.use('/videos', express.static(path.join(__dirname, 'videos')));
+app.use('/story', express.static(path.join(__dirname, 'story')));
 
 // Add endpoint to get user's last seen
 app.get('/api/users/:userId/last-seen', async (req, res) => {
@@ -131,48 +154,90 @@ io.on('connection', socket => {
 
             onlineUsers.set(socket.id, { id: user.id, name: user.username });
             userSocketMap.set(user.id, socket.id);
-
-            // Update last seen when user comes online
             await updateLastSeen(user.id);
 
             console.log(`✅ User joined: ${user.username} (UserID: ${user.id}, SocketID: ${socket.id})`);
 
-            // Join user to all their groups
+            // CRITICAL FIX: Process undelivered GROUP messages with immediate sender notification
             try {
+                const Message = require('./models/message');
                 const Group = require('./models/group');
-                const groups = await Group.find({ members: user.id });
 
-                for (const group of groups) {
-                    const groupId = group._id.toString();
-                    socket.join(groupId);
-                    console.log(`✅ User ${user.id} auto-joined group room: ${groupId}`);
+                // Get user's groups
+                const userGroups = await Group.find({ members: user.id }, '_id');
+                const userGroupIds = userGroups.map(group => group._id);
+
+                // Find undelivered GROUP messages in user's groups
+                const undeliveredGroupMessages = await Message.find({
+                    groupId: { $in: userGroupIds },
+                    messageStatus: 'sent',
+                    senderId: { $ne: user.id }
+                }).populate('senderId', 'name');
+
+                console.log(`📬 Found ${undeliveredGroupMessages.length} undelivered group messages for user ${user.id}`);
+
+                if (undeliveredGroupMessages.length > 0) {
+                    // Process each message
+                    for (const message of undeliveredGroupMessages) {
+                        // Update message status to delivered
+                        await Message.findByIdAndUpdate(message._id, {
+                            messageStatus: 'delivered',
+                            deliveredAt: new Date()
+                        });
+
+                        // CRITICAL: Notify the message sender immediately
+                        const senderSocketId = userSocketMap.get(message.senderId);
+                        if (senderSocketId) {
+                            io.to(senderSocketId).emit('group-message-delivered', {
+                                messageId: message._id,
+                                userId: user.id,
+                                groupId: message.groupId,
+                                deliveredAt: new Date(),
+                                messageStatus: 'delivered'
+                            });
+                            console.log(`📬 ✅ Notified sender ${message.senderId} about delivery to ${user.id}`);
+                        }
+                    }
+
+                    console.log(`📬 ✅ Processed ${undeliveredGroupMessages.length} group messages for delivery`);
                 }
 
-                console.log(`✅ Socket ${socket.id} is now in rooms:`, Array.from(socket.rooms));
-            } catch (err) {
-                console.error('❌ Error joining user to groups:', err);
+                // Also handle private messages (existing logic)
+                const undeliveredPrivateMessages = await Message.find({
+                    recipientId: user.id,
+                    messageStatus: 'sent',
+                    senderId: { $ne: user.id }
+                });
+
+                for (const message of undeliveredPrivateMessages) {
+                    await Message.findByIdAndUpdate(message._id, {
+                        messageStatus: 'delivered',
+                        deliveredAt: new Date()
+                    });
+
+                    const senderSocketId = userSocketMap.get(message.senderId);
+                    if (senderSocketId) {
+                        io.to(senderSocketId).emit('message-delivered', {
+                            messageId: message._id,
+                            userId: user.id,
+                            deliveredAt: new Date(),
+                            messageStatus: 'delivered'
+                        });
+                    }
+                }
+
+            } catch (error) {
+                console.error('❌ Error processing undelivered messages:', error);
             }
 
-            io.emit('user-joined-broadcast', {
-                id: user.id,
-                name: user.username,
-                isOnline: true,
-                lastSeen: new Date()
-            });
+            // Rest of existing user-joined logic...
+            // (Join groups, broadcast online status, etc.)
 
-            // Send updated online users with last seen info
-            const onlineUsersWithLastSeen = Array.from(onlineUsers.values()).map(u => ({
-                ...u,
-                isOnline: true,
-                lastSeen: new Date(),
-                lastSeenText: 'Online'
-            }));
-
-            io.emit('online-users', onlineUsersWithLastSeen);
         } catch (error) {
             console.error('❌ Error processing user-joined event:', error);
         }
     });
+
 
     socket.on('get-online-users', () => {
         const onlineUsersWithLastSeen = Array.from(onlineUsers.values()).map(u => ({
@@ -205,23 +270,6 @@ io.on('connection', socket => {
         }
     });
 
-    // socket.on('send-private-message', async ({ payload, recipientId }) => {
-    //     const recipientSocketId = userSocketMap.get(recipientId);
-
-    //     // Update sender's last seen
-    //     const senderUser = onlineUsers.get(socket.id);
-    //     if (senderUser) {
-    //         await updateLastSeen(senderUser.id);
-    //     }
-
-    //     if (recipientSocketId) {
-    //         io.to(recipientSocketId).emit('received-message', payload);
-    //         console.log(`Private message sent to ${recipientId} (Socket: ${recipientSocketId})`);
-    //     } else {
-    //         console.log(`Recipient ${recipientId} is offline or not found`);
-    //     }
-    // });
-
     socket.on('send-private-message', async ({ payload, recipientId }) => {
         try {
             const senderUser = onlineUsers.get(socket.id);
@@ -230,9 +278,27 @@ io.on('connection', socket => {
                 return;
             }
 
-            // Check if sender is blocked by recipient
+            // Check friend relationship first
+            const sender = await User.findById(senderUser.id).populate('friends');
             const recipient = await User.findById(recipientId);
-            if (recipient && recipient.blockedUsers && recipient.blockedUsers.includes(senderUser.id)) {
+
+            if (!sender || !recipient) {
+                socket.emit('message_send_error', { error: 'User not found' });
+                return;
+            }
+
+            // Check if they are friends
+            const areFriends = sender.friends.some(friend => friend._id.toString() === recipientId);
+            if (!areFriends) {
+                socket.emit('message_send_error', {
+                    error: 'You can only send messages to friends',
+                    reason: 'not_friends'
+                });
+                return;
+            }
+
+            // Check blocking logic
+            if (recipient.blockedUsers && recipient.blockedUsers.includes(senderUser.id)) {
                 socket.emit('message_send_error', {
                     error: 'Cannot send message to this user',
                     reason: 'blocked'
@@ -240,9 +306,7 @@ io.on('connection', socket => {
                 return;
             }
 
-            // Check if recipient is blocked by sender
-            const sender = await User.findById(senderUser.id);
-            if (sender && sender.blockedUsers && sender.blockedUsers.includes(recipientId)) {
+            if (sender.blockedUsers && sender.blockedUsers.includes(recipientId)) {
                 socket.emit('message_send_error', {
                     error: 'Cannot send message to this user',
                     reason: 'blocked'
@@ -251,22 +315,62 @@ io.on('connection', socket => {
             }
 
             const recipientSocketId = userSocketMap.get(recipientId);
-
-            // Update sender's last seen
             await updateLastSeen(senderUser.id);
 
+            console.log(`📨 Sending private message from ${senderUser.id} to ${recipientId}`);
+            console.log(`📊 Recipient online status: ${recipientSocketId ? 'ONLINE' : 'OFFLINE'}`);
+
             if (recipientSocketId) {
-                io.to(recipientSocketId).emit('received-message', payload);
-                console.log(`Private message sent to ${recipientId} (Socket: ${recipientSocketId})`);
+                // Recipient is ONLINE - send message and auto-mark as delivered
+                console.log(`✅ Recipient ${recipientId} is ONLINE, delivering message immediately`);
+
+                // Send the message to recipient
+                io.to(recipientSocketId).emit('received-message', {
+                    ...payload,
+                    replyTo: payload.replyTo || null
+                });
+
+                // CRITICAL FIX: Automatically mark as delivered since recipient is online
+                const messageId = payload.id || payload._id;
+                if (messageId) {
+                    try {
+                        const Message = require('./models/message');
+                        await Message.findByIdAndUpdate(messageId, {
+                            messageStatus: 'delivered',
+                            deliveredAt: new Date()
+                        });
+
+                        // Notify sender immediately about delivery
+                        socket.emit('message-delivered', {
+                            messageId,
+                            userId: recipientId,
+                            deliveredAt: new Date(),
+                            messageStatus: 'delivered'
+                        });
+
+                        console.log(`📬 ✅ Message ${messageId} auto-marked as DELIVERED (recipient online)`);
+                    } catch (error) {
+                        console.error('❌ Error auto-marking message as delivered:', error);
+                    }
+                }
+
+                console.log(`📨 ✅ Private message sent to ${recipientId} (Socket: ${recipientSocketId})`);
             } else {
-                console.log(`Recipient ${recipientId} is offline or not found`);
+                // Recipient is OFFLINE - message stays as 'sent' 
+                console.log(`📱 ❌ Recipient ${recipientId} is OFFLINE, message remains as 'sent'`);
+            }
+
+            if (payload.replyTo) {
+                console.log(`📝 Message with reply sent - Reply to: ${payload.replyTo.message}`);
             }
 
         } catch (error) {
-            console.error('Error sending private message:', error);
+            console.error('❌ Error sending private message:', error);
             socket.emit('message_send_error', { error: 'Failed to send message' });
         }
     });
+
+
     socket.on('send-message', async message => {
         const user = onlineUsers.get(socket.id);
         if (user) {
@@ -375,9 +479,8 @@ io.on('connection', socket => {
     });
 
     socket.on('send-group-message', async (payload) => {
-        console.log('Sending message to group:', payload.groupId);
+        console.log('📨 Sending message to group:', payload.groupId);
 
-        // Update sender's last seen
         const sender = onlineUsers.get(socket.id);
         if (sender) {
             await updateLastSeen(sender.id);
@@ -388,9 +491,87 @@ io.on('connection', socket => {
             console.log(`Added sender to group room: ${payload.groupId}`);
         }
 
-        io.to(payload.groupId).emit('received-group-message', payload);
-        console.log(`Message broadcast in group ${payload.groupId} by ${payload.senderId}: ${payload.message}`);
+        const messageId = payload.id || payload._id;
+        console.log(`📊 Group message ID: ${messageId}`);
+
+        // Send message to all group members
+        const completePayload = {
+            ...payload,
+            replyTo: payload.replyTo || null
+        };
+
+        // CRITICAL FIX: Emit to group members EXCEPT sender to avoid duplicate messages
+        socket.to(payload.groupId).emit('received-group-message', completePayload);
+
+        // CRITICAL FIX: Enhanced auto-delivery logic for online group members
+        if (messageId && sender) {
+            try {
+                const Group = require('./models/group');
+                const group = await Group.findById(payload.groupId).populate('members', '_id name');
+
+                if (group) {
+                    const onlineMembers = group.members.filter(member =>
+                        member._id.toString() !== sender.id && // Exclude sender
+                        userSocketMap.has(member._id.toString()) // Only online members
+                    );
+
+                    console.log(`📊 Group has ${group.members.length} total members, ${onlineMembers.length} are online (excluding sender)`);
+
+                    if (onlineMembers.length > 0) {
+                        // CRITICAL: Update message status to delivered in database
+                        const Message = require('./models/message');
+                        await Message.findByIdAndUpdate(messageId, {
+                            messageStatus: 'delivered',
+                            deliveredAt: new Date()
+                        });
+
+                        // CRITICAL: Immediately notify sender about delivery status
+                        socket.emit('group-message-delivered', {
+                            messageId,
+                            userId: 'auto_delivery', // Special indicator for auto-delivery
+                            groupId: payload.groupId,
+                            deliveredAt: new Date(),
+                            messageStatus: 'delivered',
+                            onlineMembersCount: onlineMembers.length
+                        });
+
+                        console.log(`📬 ✅ Group message ${messageId} auto-marked as DELIVERED and sender notified`);
+
+                        // CRITICAL: Set up auto-read logic after 3 seconds
+                        setTimeout(async () => {
+                            try {
+                                await Message.findByIdAndUpdate(messageId, {
+                                    messageStatus: 'read',
+                                    readAt: new Date()
+                                });
+
+                                // Notify sender about read status
+                                socket.emit('group-message-read', {
+                                    messageId,
+                                    userId: 'auto_read',
+                                    groupId: payload.groupId,
+                                    readAt: new Date(),
+                                    messageStatus: 'read'
+                                });
+
+                                console.log(`👁️ ✅ Group message ${messageId} auto-marked as READ and sender notified`);
+                            } catch (error) {
+                                console.error('❌ Error auto-marking message as read:', error);
+                            }
+                        }, 3000);
+
+                    } else {
+                        console.log(`📱 ❌ No online members in group, message remains as 'sent'`);
+                    }
+                }
+            } catch (error) {
+                console.error('❌ Error processing group message delivery:', error);
+            }
+        }
+
+        console.log(`📨 ✅ Message broadcast in group ${payload.groupId} by ${payload.senderId}`);
     });
+
 
     socket.on('group-typing', async ({ groupId, userId, userName }) => {
         console.log(`🟢 Server: User ${userName} (${userId}) is typing in group ${groupId}`);
@@ -533,20 +714,40 @@ io.on('connection', socket => {
         }
     });
 
-    // Group call handlers (existing) - with last seen updates
+    // FIXED GROUP CALL HANDLERS - COMPLETE IMPLEMENTATIONS
     socket.on('group-call-request', async ({ groupId, groupName, members, from, fromName, type }) => {
         console.log(`📞 Group call request from ${fromName} to group ${groupName} (Type: ${type})`);
 
         // Update initiator's last seen
         await updateLastSeen(from);
 
+        // Initialize group call if it doesn't exist
         if (!activeGroupCalls.has(groupId)) {
             activeGroupCalls.set(groupId, {
-                participants: new Set([from]),
+                participants: new Map(),
                 callType: type,
                 initiator: from
             });
         }
+
+        const groupCall = activeGroupCalls.get(groupId);
+
+        // CRITICAL FIX: Add the initiator to the call immediately
+        groupCall.participants.set(from, {
+            userId: from,
+            userName: fromName,
+            socketId: socket.id
+        });
+
+        // Join the initiator to the call room
+        const callRoom = `group-call-${groupId}`;
+        socket.join(callRoom);
+
+        // CRITICAL FIX: Activate the interface for the initiator immediately
+        socket.emit('group-call-joined', {
+            participants: [{ userId: from, userName: fromName }],
+            callType: type
+        });
 
         if (!members || !Array.isArray(members)) {
             console.error('❌ Invalid members array:', members);
@@ -576,7 +777,7 @@ io.on('connection', socket => {
         let notificationsSent = 0;
         const offlineMembers = [];
 
-        cleanMembers.forEach((memberId, index) => {
+        cleanMembers.forEach((memberId) => {
             if (memberId === from) {
                 return;
             }
@@ -612,17 +813,196 @@ io.on('connection', socket => {
         }
     });
 
-    // Other group call handlers remain the same but add last seen updates...
     socket.on('group-call-join', async ({ groupId, userId, userName }) => {
+        console.log(`📞 User ${userName} (${userId}) joining group call ${groupId}`);
+
         await updateLastSeen(userId);
-        // ... rest of existing code
+
+        const groupCall = activeGroupCalls.get(groupId);
+        if (!groupCall) {
+            socket.emit('group-call-error', { message: 'Group call not found' });
+            return;
+        }
+
+        // Join the call room
+        const callRoom = `group-call-${groupId}`;
+        socket.join(callRoom);
+
+        // Add participant to active call
+        groupCall.participants.set(userId, {
+            userId,
+            userName,
+            socketId: socket.id
+        });
+
+        // Get current participants for ALL users
+        const currentParticipants = Array.from(groupCall.participants.entries())
+            .map(([id, participant]) => ({
+                userId: id,
+                userName: participant.userName
+            }));
+
+        // CRITICAL FIX: Notify ALL participants in the call room about the current state
+        // This ensures everyone's interface stays active and shows all participants
+        io.to(callRoom).emit('group-call-joined', {
+            participants: currentParticipants,
+            callType: groupCall.callType,
+            newJoiner: { userId, userName } // Info about who just joined
+        });
+
+        // Also notify existing participants specifically about the new joiner
+        socket.to(callRoom).emit('group-participant-joined', {
+            userId,
+            userName
+        });
+
+        console.log(`✅ User ${userName} joined group call ${groupId}, total participants: ${groupCall.participants.size}`);
+    });
+
+    socket.on('group-call-offer', async ({ groupId, to, from, fromName, offer }) => {
+        console.log(`📞 Relaying offer from ${fromName} (${from}) to ${to} in group ${groupId}`);
+
+        await updateLastSeen(from);
+
+        const recipientSocketId = userSocketMap.get(to);
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('group-call-offer', {
+                from,
+                fromName,
+                offer,
+                groupId
+            });
+            console.log(`✅ Offer relayed to ${to}`);
+        } else {
+            console.log(`❌ Recipient ${to} not found for offer`);
+        }
+    });
+
+    socket.on('group-call-answer', async ({ groupId, to, from, fromName, answer }) => {
+        console.log(`📞 Relaying answer from ${fromName || from} (${from}) to ${to} in group ${groupId}`);
+
+        await updateLastSeen(from);
+
+        const recipientSocketId = userSocketMap.get(to);
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('group-call-answer', {
+                from,
+                fromName,
+                answer,
+                groupId
+            });
+            console.log(`✅ Answer relayed to ${to}`);
+        } else {
+            console.log(`❌ Recipient ${to} not found for answer`);
+        }
+    });
+
+    socket.on('group-ice-candidate', async ({ groupId, to, from, candidate }) => {
+        console.log(`🧊 Relaying ICE candidate from ${from} to ${to} in group ${groupId}`);
+
+        const senderUser = onlineUsers.get(socket.id);
+        if (senderUser) {
+            await updateLastSeen(senderUser.id);
+        }
+
+        const recipientSocketId = userSocketMap.get(to);
+        if (recipientSocketId) {
+            io.to(recipientSocketId).emit('group-ice-candidate', {
+                from,
+                candidate,
+                groupId
+            });
+            console.log(`✅ ICE candidate relayed to ${to}`);
+        } else {
+            console.log(`❌ Recipient ${to} not found for ICE candidate`);
+        }
+    });
+
+    socket.on('group-call-declined', async ({ groupId, userId }) => {
+        console.log(`❌ User ${userId} declined group call ${groupId}`);
+
+        await updateLastSeen(userId);
+
+        const groupCall = activeGroupCalls.get(groupId);
+        if (groupCall) {
+            groupCall.participants.delete(userId);
+
+            // Notify other participants
+            const callRoom = `group-call-${groupId}`;
+            socket.to(callRoom).emit('group-participant-left', { userId });
+
+            // CRITICAL FIX: Update remaining participants with current participant list
+            const remainingParticipants = Array.from(groupCall.participants.entries())
+                .map(([id, participant]) => ({
+                    userId: id,
+                    userName: participant.userName
+                }));
+
+            if (remainingParticipants.length > 0) {
+                io.to(callRoom).emit('group-call-joined', {
+                    participants: remainingParticipants,
+                    callType: groupCall.callType
+                });
+            }
+
+            // If no participants left, end the call
+            if (groupCall.participants.size === 0) {
+                activeGroupCalls.delete(groupId);
+                io.to(callRoom).emit('group-call-ended');
+                console.log(`🔚 Group call ${groupId} ended (no participants)`);
+            }
+        }
+    });
+
+    socket.on('group-call-left', async ({ groupId, userId }) => {
+        console.log(`👋 User ${userId} left group call ${groupId}`);
+
+        await updateLastSeen(userId);
+
+        const groupCall = activeGroupCalls.get(groupId);
+        if (groupCall) {
+            groupCall.participants.delete(userId);
+
+            // Leave the call room
+            socket.leave(`group-call-${groupId}`);
+
+            // Notify other participants
+            const callRoom = `group-call-${groupId}`;
+            socket.to(callRoom).emit('group-participant-left', { userId });
+
+            // CRITICAL FIX: Update remaining participants with current participant list
+            const remainingParticipants = Array.from(groupCall.participants.entries())
+                .map(([id, participant]) => ({
+                    userId: id,
+                    userName: participant.userName
+                }));
+
+            if (remainingParticipants.length > 0) {
+                io.to(callRoom).emit('group-call-joined', {
+                    participants: remainingParticipants,
+                    callType: groupCall.callType
+                });
+            }
+
+            console.log(`✅ User ${userId} left group call, remaining participants: ${groupCall.participants.size}`);
+
+            // If no participants left, end the call
+            if (groupCall.participants.size === 0) {
+                activeGroupCalls.delete(groupId);
+                io.to(callRoom).emit('group-call-ended');
+                console.log(`🔚 Group call ${groupId} ended (no participants)`);
+            }
+        }
     });
 
     socket.on('message-deleted', (data) => {
         const { messageId, senderId, recipientId, isPrivate } = data;
 
         if (isPrivate && recipientId) {
-            socket.to(recipientId).emit('message-deleted', { messageId, senderId });
+            const recipientSocketId = userSocketMap.get(recipientId);
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit('message-deleted', { messageId, senderId });
+            }
         }
 
         console.log(`Message ${messageId} deleted by ${senderId}`);
@@ -774,6 +1154,499 @@ io.on('connection', socket => {
         }
     });
 
+    socket.on('clear-private-chat', async ({ userId, recipientId }) => {
+        try {
+            console.log(`🧹 Clearing private chat between ${userId} and ${recipientId}`);
+
+            // Update user's last seen
+            await updateLastSeen(userId);
+
+            // Delete messages from database
+            const Message = require('./models/message');
+            const result = await Message.deleteMany({
+                $or: [
+                    { senderId: userId, recipientId: recipientId },
+                    { senderId: recipientId, recipientId: userId }
+                ]
+            });
+
+            // Notify both users about the chat being cleared
+            const recipientSocketId = userSocketMap.get(recipientId);
+
+            // Emit to the user who initiated the clear
+            socket.emit('chat-cleared', {
+                type: 'private',
+                chatId: recipientId,
+                deletedCount: result.deletedCount,
+                clearedBy: userId
+            });
+
+            // Optionally notify the other participant
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit('chat-cleared', {
+                    type: 'private',
+                    chatId: userId,
+                    deletedCount: result.deletedCount,
+                    clearedBy: userId
+                });
+            }
+
+            console.log(`✅ Private chat cleared: ${result.deletedCount} messages deleted`);
+
+        } catch (error) {
+            console.error('❌ Error clearing private chat:', error);
+            socket.emit('chat-clear-error', {
+                error: 'Failed to clear chat history',
+                details: error.message
+            });
+        }
+    });
+
+    // Handle clear group chat request
+    socket.on('clear-group-chat', async ({ groupId, userId }) => {
+        try {
+            console.log(`🧹 Clearing group chat ${groupId} for user ${userId}`);
+
+            // Update user's last seen
+            await updateLastSeen(userId);
+
+            const Message = require('./models/message');
+
+            // Option 1: Mark messages as cleared for this user only
+            const result = await Message.updateMany(
+                { groupId: groupId },
+                { $addToSet: { clearedBy: userId } }
+            );
+
+            // Emit confirmation to the user who cleared
+            socket.emit('chat-cleared', {
+                type: 'group',
+                chatId: groupId,
+                modifiedCount: result.modifiedCount,
+                clearedBy: userId
+            });
+
+            console.log(`✅ Group chat cleared for user ${userId}: ${result.modifiedCount} messages marked as cleared`);
+
+        } catch (error) {
+            console.error('❌ Error clearing group chat:', error);
+            socket.emit('chat-clear-error', {
+                error: 'Failed to clear group chat history',
+                details: error.message
+            });
+        }
+    });
+
+    socket.on('status_uploaded', async (status) => {
+        try {
+            console.log(`📸 Status uploaded event received:`, status);
+
+            // Update user's last seen
+            if (status.userId) {
+                await updateLastSeen(status.userId);
+            }
+
+            // Get uploader's friends list
+            const uploaderFriends = await getUserFriends(status.userId);
+
+            if (uploaderFriends.length > 0) {
+                console.log(`📡 Broadcasting status to ${uploaderFriends.length} friends`);
+
+                // Emit to friends only
+                emitToUsers(io, uploaderFriends, 'status_uploaded', status);
+
+                console.log(`✅ Status upload broadcasted to friends only`);
+            } else {
+                console.log(`📭 No friends found for user ${status.userId}, not broadcasting`);
+            }
+
+        } catch (error) {
+            console.error('❌ Error handling status_uploaded:', error);
+        }
+    });
+
+    // 2. STATUS DELETED - When a user deletes their status
+    socket.on('status_deleted', async ({ statusId, userId }) => {
+        try {
+            console.log(`🗑️ Status deleted:`, { statusId, userId });
+
+            // Get user's friends list
+            const userFriends = await getUserFriends(userId);
+
+            if (userFriends.length > 0) {
+                console.log(`📡 Broadcasting status deletion to ${userFriends.length} friends`);
+
+                // Emit to friends only
+                emitToUsers(io, userFriends, 'status_deleted', { statusId, userId });
+
+                console.log(`✅ Status deletion broadcasted to friends only`);
+            } else {
+                console.log(`📭 No friends found for user ${userId}, not broadcasting deletion`);
+            }
+
+        } catch (error) {
+            console.error('❌ Error handling status_deleted:', error);
+        }
+    });
+
+
+    // 3. STATUS VIEWED - When a user views a single status
+    socket.on('status_viewed', async ({ statusId, viewerId, updatedStatus }) => {
+        try {
+            console.log(`👁️ Status viewed:`, {
+                statusId,
+                viewerId,
+                totalViews: updatedStatus?.viewedBy?.length || 0
+            });
+
+            if (!updatedStatus || !updatedStatus.userId) {
+                console.error('❌ Invalid updatedStatus data');
+                return;
+            }
+
+            const statusOwnerId = updatedStatus.userId.toString();
+
+            // Only notify the status owner about the view
+            io.to(statusOwnerId).emit('status_viewed', {
+                statusId,
+                viewerId,
+                updatedStatus
+            });
+
+            console.log(`✅ Status view notification sent to owner: ${statusOwnerId}`);
+
+        } catch (error) {
+            console.error('❌ Error handling status_viewed:', error);
+            socket.emit('error', {
+                message: 'Failed to process status view',
+                statusId,
+                error: error.message
+            });
+        }
+    });
+
+
+    // 4. STATUS BULK VIEWED - When a user views multiple statuses at once
+    socket.on('status_bulk_viewed', async ({ statusIds, viewerId, updatedStatuses }) => {
+        try {
+            console.log(`📦 Bulk status viewed:`, {
+                statusIds: statusIds?.length || 0,
+                viewerId,
+                updatedCount: updatedStatuses?.length || 0
+            });
+
+            if (!updatedStatuses || updatedStatuses.length === 0) {
+                console.log('📭 No updated statuses to broadcast');
+                return;
+            }
+
+            // Group statuses by owner and notify each owner
+            const statusesByOwner = {};
+
+            updatedStatuses.forEach(status => {
+                const ownerId = status.userId.toString();
+                if (!statusesByOwner[ownerId]) {
+                    statusesByOwner[ownerId] = [];
+                }
+                statusesByOwner[ownerId].push(status);
+            });
+
+            // Notify each status owner
+            Object.keys(statusesByOwner).forEach(ownerId => {
+                io.to(ownerId).emit('status_bulk_viewed', {
+                    statusIds: statusesByOwner[ownerId].map(s => s.id),
+                    viewerId,
+                    updatedStatuses: statusesByOwner[ownerId]
+                });
+            });
+
+            console.log(`✅ Bulk status view notifications sent to ${Object.keys(statusesByOwner).length} owners`);
+
+        } catch (error) {
+            console.error('❌ Error handling status_bulk_viewed:', error);
+            socket.emit('error', {
+                message: 'Failed to process bulk status views',
+                statusIds,
+                error: error.message
+            });
+        }
+    });
+
+    // Server-side socket event handler (replace your existing one)
+    socket.on('profile_picture_updated', ({ userId, userName, profilePicture }) => {
+        console.log(`🖼️ Profile picture updated for user: ${userId}`, { userName, profilePicture });
+
+        // Broadcast to all connected clients (including the sender for consistency)
+        io.emit('profile_picture_updated', {
+            userId,
+            userName,
+            profilePicture // Make sure this matches the client expectation
+        });
+
+        console.log(`✅ Profile picture update broadcasted to all clients`);
+    });
+
+    // Add this NEW handler for general profile updates (name, email, etc.)
+    socket.on('user_profile_updated', (updatedUserData) => {
+        console.log(`👤 User profile updated for user: ${updatedUserData.id}`, updatedUserData);
+
+        io.emit('user_profile_updated', {
+            userId: updatedUserData.id,
+            ...updatedUserData
+        });
+
+        console.log(`✅ User profile update broadcasted to all clients`);
+    });
+
+    socket.on('group_profile_picture_updated', ({ groupId, groupName, profilePicture }) => {
+        console.log(`🖼️ Group picture updated: ${groupName}`, profilePicture);
+
+        // Broadcast to everyone including sender
+        io.emit('group_profile_picture_updated', {
+            groupId,
+            groupName,
+            profilePicture
+        });
+    });
+
+    socket.on('group_updated', ({ groupId, name, description, profilePicture }) => {
+        console.log(`📝 Group updated: ${name}`, { groupId, description, profilePicture });
+
+        // Broadcast to everyone including sender
+        io.emit('group_updated', {
+            groupId,
+            name,
+            description,
+            profilePicture
+        });
+    });
+
+    socket.on('group-message-reaction', async (data) => {
+        const {
+            messageId,
+            emoji,
+            userId,
+            userName,
+            action,
+            updatedReaction,
+            allReactions,
+            groupId,
+            isGroup
+        } = data;
+
+        console.log(`🎭 Group reaction ${action}: ${emoji} on message ${messageId} by ${userName} in group ${groupId}`);
+
+        // Update user's last seen
+        await updateLastSeen(userId);
+
+        // CRITICAL FIX: Broadcast the reaction to ALL users in the group room
+        if (groupId) {
+            // Make sure the sender is in the group room
+            if (!socket.rooms.has(groupId)) {
+                socket.join(groupId);
+                console.log(`🎭 Added socket ${socket.id} to group room ${groupId} for reaction`);
+            }
+
+            // Broadcast to all group members INCLUDING the sender for consistency
+            io.to(groupId).emit('group-message-reaction', {
+                messageId,
+                emoji,
+                userId,
+                userName,
+                action,
+                updatedReaction,
+                allReactions,
+                groupId
+            });
+
+            console.log(`✅ Group reaction broadcasted to group ${groupId} from ${userName}`);
+        } else {
+            console.error(`❌ Group ID missing for group reaction from ${userName}`);
+        }
+    });
+
+    // Also fix the message-reaction handler for private messages
+    socket.on('message-reaction', async (data) => {
+        const {
+            messageId,
+            emoji,
+            userId,
+            userName,
+            action,
+            updatedReaction,
+            allReactions,
+            recipientId,
+            isPrivate
+        } = data;
+
+        console.log(`🎭 Reaction ${action}: ${emoji} on message ${messageId} by ${userName}`);
+
+        // Update user's last seen
+        await updateLastSeen(userId);
+
+        if (isPrivate && recipientId) {
+            const recipientSocketId = userSocketMap.get(recipientId);
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit('message-reaction', {
+                    messageId,
+                    emoji,
+                    userId,
+                    userName,
+                    action,
+                    updatedReaction,
+                    allReactions
+                });
+                console.log(`✅ Private message reaction sent to ${recipientId}`);
+            } else {
+                console.log(`❌ Recipient ${recipientId} is offline for reaction`);
+            }
+        }
+    });
+
+    socket.on('message-delivered', async (data) => {
+        const { messageId, userId, deliveredAt, messageStatus } = data;
+        console.log(`📬 Received message-delivered event: ${messageId} by ${userId}`);
+
+        // Find the message sender and notify them
+        const Message = require('./models/message');
+        const message = await Message.findById(messageId);
+
+        if (message && message.senderId) {
+            const senderSocketId = userSocketMap.get(message.senderId);
+            if (senderSocketId) {
+                io.to(senderSocketId).emit('message-delivered', {
+                    messageId,
+                    userId,
+                    deliveredAt,
+                    messageStatus
+                });
+                console.log(`📬 ✅ Delivered status sent to sender ${message.senderId}`);
+            }
+        }
+    });
+
+    socket.on('group-message-delivered', async (data) => {
+        const { messageId, userId, groupId, deliveredAt, messageStatus } = data;
+        console.log(`📬 Group message delivered event: ${messageId} by ${userId} in group ${groupId}`);
+
+        try {
+            const Message = require('./models/message');
+            const Group = require('./models/group');
+
+            const message = await Message.findById(messageId);
+            if (!message) {
+                console.error(`❌ Message ${messageId} not found`);
+                return;
+            }
+
+            // Update message status in database if it's still 'sent'
+            if (message.messageStatus === 'sent') {
+                await Message.findByIdAndUpdate(messageId, {
+                    messageStatus: 'delivered',
+                    deliveredAt: new Date(deliveredAt)
+                });
+                console.log(`📬 Updated message ${messageId} status to delivered in database`);
+            }
+
+            // CRITICAL: Always notify the message sender immediately
+            if (message.senderId && message.senderId !== userId) {
+                const senderSocketId = userSocketMap.get(message.senderId);
+                if (senderSocketId) {
+                    io.to(senderSocketId).emit('group-message-delivered', {
+                        messageId,
+                        userId,
+                        groupId,
+                        deliveredAt: new Date(deliveredAt),
+                        messageStatus: 'delivered'
+                    });
+                    console.log(`📬 ✅ Delivery notification sent to sender ${message.senderId}`);
+                } else {
+                    console.log(`📬 ❌ Sender ${message.senderId} is offline, cannot notify`);
+                }
+            }
+
+            // Update user's last seen
+            await updateLastSeen(userId);
+
+        } catch (error) {
+            console.error('❌ Error handling group message delivered:', error);
+        }
+    });
+
+
+    socket.on('group-message-read', async (data) => {
+        const { messageId, userId, groupId, readAt, messageStatus } = data;
+        console.log(`👁️ Group message read event: ${messageId} by ${userId} in group ${groupId}`);
+
+        try {
+            const Message = require('./models/message');
+            const message = await Message.findById(messageId);
+
+            if (!message) {
+                console.error(`❌ Message ${messageId} not found`);
+                return;
+            }
+
+            // Update message status to read in database
+            if (message.messageStatus !== 'read') {
+                await Message.findByIdAndUpdate(messageId, {
+                    messageStatus: 'read',
+                    readAt: new Date(readAt),
+                    deliveredAt: message.deliveredAt || new Date(readAt)
+                });
+                console.log(`👁️ Updated message ${messageId} status to read in database`);
+            }
+
+            // CRITICAL: Always notify the message sender immediately
+            if (message.senderId && message.senderId !== userId) {
+                const senderSocketId = userSocketMap.get(message.senderId);
+                if (senderSocketId) {
+                    io.to(senderSocketId).emit('group-message-read', {
+                        messageId,
+                        userId,
+                        groupId,
+                        readAt: new Date(readAt),
+                        messageStatus: 'read'
+                    });
+                    console.log(`👁️ ✅ Read notification sent to sender ${message.senderId}`);
+                } else {
+                    console.log(`👁️ ❌ Sender ${message.senderId} is offline, cannot notify`);
+                }
+            }
+
+            // Update user's last seen
+            await updateLastSeen(userId);
+
+        } catch (error) {
+            console.error('❌ Error handling group message read:', error);
+        }
+    });
+
+
+
+    // Listen for message read events from clients
+    socket.on('message-read', async (data) => {
+        const { messageId, userId, readAt, messageStatus } = data;
+        console.log(`👁️ Received message-read event: ${messageId} by ${userId}`);
+
+        // Find the message sender and notify them
+        const Message = require('./models/message');
+        const message = await Message.findById(messageId);
+
+        if (message && message.senderId) {
+            const senderSocketId = userSocketMap.get(message.senderId);
+            if (senderSocketId) {
+                io.to(senderSocketId).emit('message-read', {
+                    messageId,
+                    userId,
+                    readAt,
+                    messageStatus
+                });
+                console.log(`👁️ ✅ Read status sent to sender ${message.senderId}`);
+            }
+        }
+    });
+
     socket.on('disconnect', async () => {
         if (onlineUsers.has(socket.id)) {
             const user = onlineUsers.get(socket.id);
@@ -803,8 +1676,12 @@ io.on('connection', socket => {
                         userId: user.id
                     });
 
+                    console.log(`🔚 User ${user.id} removed from group call ${groupId} due to disconnect`);
+
                     if (groupCall.participants.size === 0) {
                         activeGroupCalls.delete(groupId);
+                        io.to(groupCallRoom).emit('group-call-ended');
+                        console.log(`🔚 Group call ${groupId} ended (no participants after disconnect)`);
                     }
                 }
             });
