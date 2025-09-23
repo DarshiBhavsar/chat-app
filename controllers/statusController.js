@@ -359,7 +359,7 @@ exports.markAsViewed = async (req, res) => {
                 createdAt: status.createdAt,
                 expiresAt: status.expiresAt,
                 viewedBy: status.viewedBy.map(id => id.toString()),
-                viewers: status.viewers.map(viewer => ({
+                viewers: (status.viewers || []).map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
                     profilePicture: viewer.userId.profilePicture ? `/uploads/${path.basename(viewer.userId.profilePicture)}` : null,
@@ -377,14 +377,17 @@ exports.markAsViewed = async (req, res) => {
             });
         }
 
+        // FIXED: Use helper function to get arrays with proper defaults
+        const { friends: userFriends, blockedUsers: userBlockedUsers, blockedBy: userBlockedBy } = getUserArrays(currentUser);
+
         // Check if status owner is a friend and not blocked
-        const isStatusOwnerFriend = currentUser.friends.some(friendId =>
+        const isStatusOwnerFriend = userFriends.some(friendId =>
             friendId.toString() === statusOwnerId
         );
 
-        const isBlocked = currentUser.blockedUsers.some(blockedId =>
+        const isBlocked = userBlockedUsers.some(blockedId =>
             blockedId.toString() === statusOwnerId
-        ) || currentUser.blockedBy.some(blockedById =>
+        ) || userBlockedBy.some(blockedById =>
             blockedById.toString() === statusOwnerId
         );
 
@@ -431,7 +434,7 @@ exports.markAsViewed = async (req, res) => {
                 createdAt: updatedStatus.createdAt,
                 expiresAt: updatedStatus.expiresAt,
                 viewedBy: updatedStatus.viewedBy.map(id => id.toString()),
-                viewers: updatedStatus.viewers.map(viewer => ({
+                viewers: (updatedStatus.viewers || []).map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
                     profilePicture: viewer.userId.profilePicture ? `/uploads/${path.basename(viewer.userId.profilePicture)}` : null,
@@ -471,7 +474,7 @@ exports.markAsViewed = async (req, res) => {
                 createdAt: status.createdAt,
                 expiresAt: status.expiresAt,
                 viewedBy: status.viewedBy.map(id => id.toString()),
-                viewers: status.viewers.map(viewer => ({
+                viewers: (status.viewers || []).map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
                     profilePicture: viewer.userId.profilePicture ? `/uploads/${path.basename(viewer.userId.profilePicture)}` : null,
@@ -484,7 +487,7 @@ exports.markAsViewed = async (req, res) => {
                 success: true,
                 message: 'Status already viewed',
                 wasNewView,
-                totalViews: status.viewers.length,
+                totalViews: status.viewers ? status.viewers.length : 0,
                 statusOwnerId: status.userId._id.toString(),
                 updatedStatus: statusData
             });
