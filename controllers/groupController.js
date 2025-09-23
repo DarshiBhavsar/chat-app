@@ -14,6 +14,30 @@ const getFullImageUrl = (relativePath, baseUrl) => {
     return `${baseUrl}${relativePath}`;
 };
 
+const processUser = (user, baseUrl) => {
+    if (!user) return null;
+    return {
+        ...user.toObject(),
+        profilePicture: getFullImageUrl(user.profilePicture, baseUrl)
+    };
+};
+
+// Helper function to safely process group data
+const processGroupData = (group, baseUrl) => {
+    const creator = processUser(group.creator, baseUrl);
+    const members = group.members
+        .filter(member => member !== null)
+        .map(member => processUser(member, baseUrl))
+        .filter(member => member !== null);
+
+    return {
+        ...group.toObject(),
+        profilePicture: getFullImageUrl(group.profilePicture, baseUrl),
+        creator,
+        members
+    };
+};
+
 // Create a new group
 exports.createGroup = async (req, res) => {
     try {
@@ -62,19 +86,7 @@ exports.getAllGroups = async (req, res) => {
             .populate('members', 'username email profilePicture');
 
         const baseUrl = getBaseUrl(req);
-
-        const groupsWithFullUrls = groups.map(group => ({
-            ...group.toObject(),
-            profilePicture: getFullImageUrl(group.profilePicture, baseUrl),
-            creator: {
-                ...group.creator.toObject(),
-                profilePicture: getFullImageUrl(group.creator.profilePicture, baseUrl)
-            },
-            members: group.members.map(member => ({
-                ...member.toObject(),
-                profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
-            }))
-        }));
+        const groupsWithFullUrls = groups.map(group => processGroupData(group, baseUrl));
 
         res.json(groupsWithFullUrls);
     } catch (error) {
@@ -101,25 +113,14 @@ exports.getUserGroups = async (req, res) => {
             .populate('members', 'username email profilePicture');
 
         const baseUrl = getBaseUrl(req);
-
-        const groupsWithFullUrls = myGroups.map(group => ({
-            ...group.toObject(),
-            profilePicture: getFullImageUrl(group.profilePicture, baseUrl),
-            creator: {
-                ...group.creator.toObject(),
-                profilePicture: getFullImageUrl(group.creator.profilePicture, baseUrl)
-            },
-            members: group.members.map(member => ({
-                ...member.toObject(),
-                profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
-            }))
-        }));
+        const groupsWithFullUrls = myGroups.map(group => processGroupData(group, baseUrl));
 
         res.json(groupsWithFullUrls);
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
+
 
 // Add user to group
 exports.addUserToGroup = async (req, res) => {
@@ -658,7 +659,7 @@ exports.updateGroup = async (req, res) => {
         }
 
         // Check if user is a member or creator of the group
-        const isMember = group.members.some(member => 
+        const isMember = group.members.some(member =>
             member.userId?.toString() === userId || member.toString() === userId
         );
         const isCreator = group.creator.toString() === userId;
@@ -677,7 +678,7 @@ exports.updateGroup = async (req, res) => {
             updateData,
             { new: true }
         ).populate('members', 'username email profilePicture')
-         .populate('creator', 'username email profilePicture');
+            .populate('creator', 'username email profilePicture');
 
         const baseUrl = getBaseUrl(req);
 
