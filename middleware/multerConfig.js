@@ -2,11 +2,13 @@ const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 
-// Configure Cloudinary
+// Configure Cloudinary using CLOUDINARY_URL
+if (!process.env.CLOUDINARY_URL) {
+    throw new Error('CLOUDINARY_URL environment variable is required');
+}
+
 cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
+    cloudinary_url: process.env.CLOUDINARY_URL
 });
 
 // Configure Cloudinary storage
