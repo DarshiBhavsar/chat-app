@@ -14,7 +14,8 @@ const friendRoutes = require('./routes/friendRoutes'); // Add friend routes
 const User = require('./models/user');
 const verifyToken = require('./middleware/authMiddleware');
 const jwt = require('jsonwebtoken');
-
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('cloudinary').v2;
 const app = express();
 const server = http.createServer(app);
 
@@ -60,7 +61,16 @@ const updateLastSeen = async (userId) => {
         console.error('Error updating last seen in database:', error);
     }
 };
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
+// Test Cloudinary connection
+cloudinary.api.ping()
+    .then(result => console.log('Cloudinary connected successfully:', result))
+    .catch(error => console.error('Cloudinary connection failed:', error));
 // Helper function to set user offline
 const setUserOffline = async (userId) => {
     const timestamp = new Date();
