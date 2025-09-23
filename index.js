@@ -32,8 +32,8 @@ app.use('/api/friends', friendRoutes); // Add friend routes
 
 const io = new Server(server, {
     cors: {
-        // origin: 'https://chat-application-reactjs-nodejs.netlify.app',
-        origin: 'http://localhost:5173',
+        origin: 'https://chat-application-reactjs-nodejs.netlify.app',
+        // origin: 'http://localhost:5173',
         pingTimeout: 10000,
         methods: ['GET', 'POST']
     }
