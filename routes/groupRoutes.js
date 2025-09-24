@@ -4,20 +4,64 @@ const upload = require('../middleware/multerConfig');
 const verifyToken = require('../middleware/authMiddleware');
 const groupController = require('../controllers/groupController');
 
+// ✅ Add error handling for multer import
+console.log('📦 Multer upload object:', typeof upload);
+console.log('📦 Upload methods available:', Object.getOwnPropertyNames(upload));
+
+// Create group
 router.post('/create', verifyToken, groupController.createGroup);
 
-router.post('/upload-image', upload.array('image'), (req, res) => {
-    if (!req.files || req.files.length === 0) {
-        return res.status(400).json({ message: 'No image uploaded' });
+// ✅ Fixed image upload route with proper error handling
+router.post('/upload-image', verifyToken, (req, res, next) => {
+    // Check if upload is properly imported
+    if (!upload || typeof upload.array !== 'function') {
+        console.error('❌ Upload middleware not properly configured');
+        return res.status(500).json({
+            message: 'Server configuration error - upload middleware not available',
+            debug: {
+                uploadType: typeof upload,
+                hasArray: upload && typeof upload.array === 'function',
+                uploadMethods: upload ? Object.getOwnPropertyNames(upload) : 'null'
+            }
+        });
     }
 
-    const imageUrls = req.files.map(file => `/uploads/${file.filename}`);
-    res.status(200).json({ imageUrls });
+    // Use multer middleware
+    upload.array('image', 10)(req, res, (err) => {
+        if (err) {
+            console.error('❌ Multer error:', err);
+            return res.status(400).json({
+                message: 'File upload error',
+                error: err.message
+            });
+        }
+
+        // Handle the uploaded files
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ message: 'No image uploaded' });
+        }
+
+        // ✅ Use Cloudinary URLs instead of local paths
+        const imageUrls = req.files.map(file => {
+            console.log('📸 Uploaded file:', file);
+            return file.path; // Cloudinary URL is in file.path
+        });
+
+        res.status(200).json({
+            message: 'Images uploaded successfully',
+            imageUrls,
+            debug: {
+                filesCount: req.files.length,
+                firstFile: req.files[0]
+            }
+        });
+    });
 });
 
-
+// Get all groups
 router.get('/all', groupController.getAllGroups);
 
+// Get user's groups
 router.get('/my-groups/:userId', verifyToken, groupController.getUserGroups);
 
 // Leave a group
@@ -33,8 +77,25 @@ router.post('/remove-member/:groupId', verifyToken, groupController.removeMember
 router.post('/:groupId/members', verifyToken, groupController.addUserToGroup);
 router.delete('/:groupId/members/:userId', verifyToken, groupController.removeUserFromGroup);
 
-router.put('/:groupId/profile-picture', verifyToken, groupController.updateGroupProfilePicture)
+// Update group profile picture
+router.put('/:groupId/profile-picture', verifyToken, (req, res, next) => {
+    // Check if single file upload is available
+    if (!upload || typeof upload.single !== 'function') {
+        return res.status(500).json({ message: 'Upload middleware not configured' });
+    }
 
+    upload.single('profilePicture')(req, res, (err) => {
+        if (err) {
+            return res.status(400).json({
+                message: 'File upload error',
+                error: err.message
+            });
+        }
+        groupController.updateGroupProfilePicture(req, res);
+    });
+});
+
+// Update group
 router.put('/update/:groupId', verifyToken, groupController.updateGroup);
 
 module.exports = router;
