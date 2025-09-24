@@ -28,7 +28,6 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/profile', profileRoutes);
 app.use('/api/friends', friendRoutes);
-app.use("/uploads", express.static("uploads"));
 
 const io = new Server(server, {
     cors: {
