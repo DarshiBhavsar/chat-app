@@ -2,6 +2,32 @@ const User = require('../models/user');
 const Group = require('../models/group'); // ✅ Add this missing import
 const fs = require('fs').promises;
 const path = require('path');
+const cloudinary = require('cloudinary').v2;
+
+
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+const deleteFromCloudinary = async (imageUrl) => {
+    try {
+        if (!imageUrl || !imageUrl.includes('cloudinary.com')) return;
+
+        // Extract public_id from Cloudinary URL
+        const parts = imageUrl.split('/');
+        const publicIdWithExtension = parts[parts.length - 1];
+        const publicId = publicIdWithExtension.split('.')[0];
+
+        // Delete from Cloudinary
+        await cloudinary.uploader.destroy(`chat-app-uploads/${publicId}`);
+        console.log('Image deleted from Cloudinary successfully');
+    } catch (error) {
+        console.log('Cloudinary deletion failed:', error.message);
+    }
+};
+
 
 // Helper function to get the base URL
 const getBaseUrl = (req) => {
@@ -36,66 +62,47 @@ exports.uploadProfilePicture = async (req, res) => {
         // Get current user to check for existing profile picture
         const user = await User.findById(userId);
         if (!user) {
-            // Clean up uploaded file if user not found
-            try {
-                await fs.unlink(req.file.path);
-            } catch (unlinkError) {
-                console.error('Error cleaning up uploaded file:', unlinkError);
-            }
             return res.status(404).json({ message: 'User not found' });
         }
 
-        // Delete old profile picture if it exists
+        // Delete old profile picture from Cloudinary if it exists
         if (user.profilePicture) {
-            try {
-                let oldImagePath;
-                // Extract filename from any URL format
-                const filename = path.basename(user.profilePicture);
-                oldImagePath = path.join(__dirname, '..', 'uploads', filename);
-                await fs.unlink(oldImagePath);
-                console.log('Old profile picture deleted successfully');
-            } catch (error) {
-                console.log('Old image deletion failed (file might not exist):', error.message);
-            }
+            await deleteFromCloudinary(user.profilePicture);
         }
 
-        // Store relative URL in database for flexibility
-        const relativePath = `/uploads/${req.file.filename}`;
+        // The file URL is automatically provided by Cloudinary via multer-storage-cloudinary
+        const imageUrl = req.file.path; // This is the full Cloudinary URL
 
-        // Get base URL for response
-        const baseUrl = getBaseUrl(req);
-        const fullImageUrl = getFullImageUrl(relativePath, baseUrl);
-
-        // Update user in database with relative path
+        // Update user in database with Cloudinary URL
         const updatedUser = await User.findByIdAndUpdate(
             userId,
-            { profilePicture: relativePath },
+            { profilePicture: imageUrl },
             { new: true, select: 'username email profilePicture isOnline lastSeen about phone' }
         );
 
-        // Emit socket event with relative path (consistency)
+        // Emit socket event
         const io = req.app.get('io');
         if (io) {
             io.emit('profile_picture_updated', {
                 userId: updatedUser._id.toString(),
                 userName: updatedUser.username,
                 userEmail: updatedUser.email,
-                newProfilePicture: relativePath,
-                fullUrl: fullImageUrl
+                newProfilePicture: imageUrl,
+                fullUrl: imageUrl
             });
         }
 
-        // Return full URL to frontend with complete user data
+        // Return response with Cloudinary URL
         res.json({
             message: 'Profile picture uploaded successfully',
-            url: fullImageUrl, // ✅ Full URL for frontend
-            imageUrl: fullImageUrl, // ✅ Alternative key for compatibility
+            url: imageUrl,
+            imageUrl: imageUrl,
             user: {
                 id: updatedUser._id,
                 name: updatedUser.username,
                 username: updatedUser.username,
                 email: updatedUser.email,
-                profilePicture: fullImageUrl, // ✅ Full URL for frontend
+                profilePicture: imageUrl,
                 about: updatedUser.about,
                 phone: updatedUser.phone,
                 isOnline: updatedUser.isOnline,
@@ -105,16 +112,6 @@ exports.uploadProfilePicture = async (req, res) => {
 
     } catch (error) {
         console.error('Error uploading profile picture:', error);
-
-        // Clean up uploaded file if database operation fails
-        if (req.file) {
-            try {
-                await fs.unlink(req.file.path);
-            } catch (unlinkError) {
-                console.error('Error cleaning up uploaded file:', unlinkError);
-            }
-        }
-
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
@@ -129,17 +126,9 @@ exports.removeProfilePicture = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        // Delete profile picture file if it exists
+        // Delete profile picture from Cloudinary if it exists
         if (user.profilePicture) {
-            try {
-                // Extract filename from any URL format
-                const filename = path.basename(user.profilePicture);
-                const imagePath = path.join(__dirname, '..', 'uploads', filename);
-                await fs.unlink(imagePath);
-                console.log('Profile picture file deleted successfully');
-            } catch (error) {
-                console.log('Image deletion failed (file might not exist):', error.message);
-            }
+            await deleteFromCloudinary(user.profilePicture);
         }
 
         // Remove profile picture from database
@@ -167,7 +156,7 @@ exports.removeProfilePicture = async (req, res) => {
                 name: updatedUser.username,
                 username: updatedUser.username,
                 email: updatedUser.email,
-                profilePicture: null, // ✅ Explicitly null
+                profilePicture: null,
                 about: updatedUser.about,
                 phone: updatedUser.phone,
                 isOnline: updatedUser.isOnline,
@@ -180,6 +169,7 @@ exports.removeProfilePicture = async (req, res) => {
     }
 };
 
+
 // Get user profile with picture
 exports.getUserProfile = async (req, res) => {
     try {
@@ -190,16 +180,12 @@ exports.getUserProfile = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        // Get base URL and convert to full URL
-        const baseUrl = getBaseUrl(req);
-        const fullImageUrl = getFullImageUrl(user.profilePicture, baseUrl);
-
         res.json({
             id: user._id,
             name: user.username,
             username: user.username,
             email: user.email,
-            profilePicture: fullImageUrl,
+            profilePicture: user.profilePicture || null, // Direct Cloudinary URL
             about: user.about,
             phone: user.phone,
             isOnline: user.isOnline,
@@ -220,24 +206,18 @@ exports.getAllUsers = async (req, res) => {
             .select('username email profilePicture isOnline lastSeen about phone')
             .sort({ username: 1 });
 
-        const baseUrl = getBaseUrl(req);
-
-        const usersWithFormattedPictures = users.map(user => {
-            const fullImageUrl = getFullImageUrl(user.profilePicture, baseUrl);
-
-            return {
-                id: user._id,
-                name: user.username,
-                username: user.username,
-                email: user.email,
-                profilePicture: fullImageUrl,
-                about: user.about,
-                phone: user.phone,
-                online: user.isOnline,
-                isOnline: user.isOnline,
-                lastSeen: user.lastSeen
-            };
-        });
+        const usersWithFormattedPictures = users.map(user => ({
+            id: user._id,
+            name: user.username,
+            username: user.username,
+            email: user.email,
+            profilePicture: user.profilePicture || null, // Direct Cloudinary URL
+            about: user.about,
+            phone: user.phone,
+            online: user.isOnline,
+            isOnline: user.isOnline,
+            lastSeen: user.lastSeen
+        }));
 
         res.json(usersWithFormattedPictures);
     } catch (error) {
@@ -259,53 +239,30 @@ exports.uploadGroupPicture = async (req, res) => {
         // Get current group and check if user is a member/admin
         const group = await Group.findById(groupId);
         if (!group) {
-            // Clean up uploaded file if group not found
-            try {
-                await fs.unlink(req.file.path);
-            } catch (unlinkError) {
-                console.error('Error cleaning up uploaded file:', unlinkError);
-            }
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        // Check if user is a member of the group (optional: add admin check)
+        // Check if user is a member of the group
         const isMember = group.members.some(member =>
             member.userId?.toString() === userId || member.toString() === userId
         );
 
         if (!isMember) {
-            try {
-                await fs.unlink(req.file.path);
-            } catch (unlinkError) {
-                console.error('Error cleaning up uploaded file:', unlinkError);
-            }
             return res.status(403).json({ message: 'You are not a member of this group' });
         }
 
-        // Delete old group picture if it exists
+        // Delete old group picture from Cloudinary if it exists
         if (group.profilePicture) {
-            try {
-                const oldPicture = group.profilePicture;
-                const filename = path.basename(oldPicture);
-                const oldImagePath = path.join(__dirname, '..', 'uploads', filename);
-                await fs.unlink(oldImagePath);
-                console.log('Old group picture deleted successfully');
-            } catch (error) {
-                console.log('Old group image deletion failed (file might not exist):', error.message);
-            }
+            await deleteFromCloudinary(group.profilePicture);
         }
 
-        // Store relative URL in database
-        const relativePath = `/uploads/${req.file.filename}`;
-        const baseUrl = getBaseUrl(req);
-        const fullImageUrl = getFullImageUrl(relativePath, baseUrl);
+        // Get Cloudinary URL from uploaded file
+        const imageUrl = req.file.path; // Full Cloudinary URL
 
-        // Update group in database with both fields for compatibility
+        // Update group in database with Cloudinary URL
         const updatedGroup = await Group.findByIdAndUpdate(
             groupId,
-            {
-                profilePicture: relativePath
-            },
+            { profilePicture: imageUrl },
             { new: true }
         ).populate('members', 'username email profilePicture');
 
@@ -315,41 +272,31 @@ exports.uploadGroupPicture = async (req, res) => {
             io.to(`group_${groupId}`).emit('group_picture_updated', {
                 groupId: updatedGroup._id.toString(),
                 groupName: updatedGroup.name,
-                newGroupPicture: relativePath,
-                fullUrl: fullImageUrl
+                newGroupPicture: imageUrl,
+                fullUrl: imageUrl
             });
         }
 
         res.json({
             message: 'Group picture uploaded successfully',
-            url: fullImageUrl,
-            imageUrl: fullImageUrl,
+            url: imageUrl,
+            imageUrl: imageUrl,
             group: {
                 id: updatedGroup._id,
                 name: updatedGroup.name,
-                profilePicture: fullImageUrl,
+                profilePicture: imageUrl,
                 description: updatedGroup.description,
                 members: updatedGroup.members.map(member => ({
                     id: member._id,
                     username: member.username,
                     email: member.email,
-                    profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
+                    profilePicture: member.profilePicture || null
                 }))
             }
         });
 
     } catch (error) {
         console.error('Error uploading group picture:', error);
-
-        // Clean up uploaded file if database operation fails
-        if (req.file) {
-            try {
-                await fs.unlink(req.file.path);
-            } catch (unlinkError) {
-                console.error('Error cleaning up uploaded file:', unlinkError);
-            }
-        }
-
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
@@ -374,27 +321,15 @@ exports.removeGroupPicture = async (req, res) => {
             return res.status(403).json({ message: 'You are not a member of this group' });
         }
 
-        // Delete group picture file if it exists
-        const pictureToDelete = group.profilePicture;
-        if (pictureToDelete) {
-            try {
-                const filename = path.basename(pictureToDelete);
-                const imagePath = path.join(__dirname, '..', 'uploads', filename);
-                await fs.unlink(imagePath);
-                console.log('Group picture file deleted successfully');
-            } catch (error) {
-                console.log('Group image deletion failed (file might not exist):', error.message);
-            }
+        // Delete group picture from Cloudinary if it exists
+        if (group.profilePicture) {
+            await deleteFromCloudinary(group.profilePicture);
         }
 
         // Remove group picture from database
         const updatedGroup = await Group.findByIdAndUpdate(
             groupId,
-            {
-                $unset: {
-                    profilePicture: 1  // ✅ Remove both for compatibility
-                }
-            },
+            { $unset: { profilePicture: 1 } },
             { new: true }
         ).populate('members', 'username email profilePicture');
 
@@ -408,20 +343,18 @@ exports.removeGroupPicture = async (req, res) => {
             });
         }
 
-        const baseUrl = getBaseUrl(req);
-
         res.json({
             message: 'Group picture removed successfully',
             group: {
                 id: updatedGroup._id,
                 name: updatedGroup.name,
-                profilePicture: null, // ✅ Add for compatibility
+                profilePicture: null,
                 description: updatedGroup.description,
                 members: updatedGroup.members.map(member => ({
                     id: member._id,
                     username: member.username,
                     email: member.email,
-                    profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
+                    profilePicture: member.profilePicture || null
                 }))
             }
         });
@@ -443,22 +376,18 @@ exports.getGroupProfile = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        const baseUrl = getBaseUrl(req);
-        const groupPicture = group.profilePicture;
-        const fullImageUrl = getFullImageUrl(groupPicture, baseUrl);
-
         res.json({
             id: group._id,
             name: group.name,
             description: group.description,
-            profilePicture: fullImageUrl, // ✅ Add for compatibility
+            profilePicture: group.profilePicture || null, // Direct Cloudinary URL
             members: group.members.map(member => ({
                 id: member._id,
                 username: member.username,
                 email: member.email,
                 about: member.about,
                 phone: member.phone,
-                profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
+                profilePicture: member.profilePicture || null
             })),
             createdAt: group.createdAt
         });
@@ -467,7 +396,6 @@ exports.getGroupProfile = async (req, res) => {
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
-
 // ✅ Update user profile (name, about, etc.)
 exports.updateUserProfile = async (req, res) => {
     try {
@@ -492,23 +420,20 @@ exports.updateUserProfile = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        const baseUrl = getBaseUrl(req);
-        const fullImageUrl = getFullImageUrl(updatedUser.profilePicture, baseUrl);
-
-        // Emit socket event for profile update - FIXED EVENT NAME
+        // Emit socket event for profile update
         const io = req.app.get('io');
         if (io) {
             console.log('🔄 Emitting user_profile_updated event for userId:', updatedUser._id.toString());
 
             io.emit('user_profile_updated', {
                 userId: updatedUser._id.toString(),
-                id: updatedUser._id.toString(), // Include both userId and id for consistency
+                id: updatedUser._id.toString(),
                 name: updatedUser.username,
                 username: updatedUser.username,
                 email: updatedUser.email,
                 about: updatedUser.about,
                 phone: updatedUser.phone,
-                profilePicture: fullImageUrl
+                profilePicture: updatedUser.profilePicture || null
             });
 
             console.log('✅ user_profile_updated event emitted successfully');
@@ -525,7 +450,7 @@ exports.updateUserProfile = async (req, res) => {
                 email: updatedUser.email,
                 about: updatedUser.about,
                 phone: updatedUser.phone,
-                profilePicture: fullImageUrl,
+                profilePicture: updatedUser.profilePicture || null,
                 isOnline: updatedUser.isOnline,
                 lastSeen: updatedUser.lastSeen
             }
