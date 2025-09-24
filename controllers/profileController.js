@@ -1,16 +1,15 @@
 const User = require('../models/user');
-const Group = require('../models/group'); // ✅ Add this missing import
-const fs = require('fs').promises;
-const path = require('path');
+const Group = require('../models/group');
 const cloudinary = require('cloudinary').v2;
 
-
+// Configure Cloudinary (you can also add this to your index.js)
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Helper function to delete image from Cloudinary
 const deleteFromCloudinary = async (imageUrl) => {
     try {
         if (!imageUrl || !imageUrl.includes('cloudinary.com')) return;
@@ -26,28 +25,6 @@ const deleteFromCloudinary = async (imageUrl) => {
     } catch (error) {
         console.log('Cloudinary deletion failed:', error.message);
     }
-};
-
-
-// Helper function to get the base URL
-const getBaseUrl = (req) => {
-    // In development
-    if (process.env.NODE_ENV !== 'production') {
-        // return 'http://localhost:5000';
-        return 'https://socket-application-react-nodejs.onrender.com';
-    }
-    // In production, use the request protocol and host
-    return `${req.protocol}://${req.get('host')}`;
-};
-
-// Helper function to convert relative URL to full URL
-const getFullImageUrl = (relativePath, baseUrl) => {
-    if (!relativePath) return null;
-    if (relativePath.startsWith('http')) return relativePath; // Already full URL
-
-    // Remove leading slash if present to avoid double slashes
-    const cleanPath = relativePath.startsWith('/') ? relativePath.substring(1) : relativePath;
-    return `${baseUrl}/${cleanPath}`;
 };
 
 // Upload profile picture
@@ -169,7 +146,6 @@ exports.removeProfilePicture = async (req, res) => {
     }
 };
 
-
 // Get user profile with picture
 exports.getUserProfile = async (req, res) => {
     try {
@@ -226,7 +202,7 @@ exports.getAllUsers = async (req, res) => {
     }
 };
 
-// ✅ Fixed uploadGroupPicture with proper error handling
+// Upload group picture
 exports.uploadGroupPicture = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -396,7 +372,8 @@ exports.getGroupProfile = async (req, res) => {
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
-// ✅ Update user profile (name, about, etc.)
+
+// Update user profile (name, about, etc.)
 exports.updateUserProfile = async (req, res) => {
     try {
         const userId = req.user.id;
