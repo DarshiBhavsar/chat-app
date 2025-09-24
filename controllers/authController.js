@@ -213,7 +213,8 @@ exports.getBlockedUsers = async (req, res) => {
             id: blockedUser._id,
             name: blockedUser.username,
             email: blockedUser.email,
-            profilePicture: blockedUser.profilePicture ? `/api/uploads/${path.basename(blockedUser.profilePicture)}` : null
+            // CHANGED: Direct Cloudinary URL - no path manipulation needed
+            profilePicture: blockedUser.profilePicture || null
         }));
 
         res.json(blockedUsers);
@@ -226,7 +227,7 @@ exports.getBlockedUsers = async (req, res) => {
 exports.getCurrentUser = async (req, res) => {
     try {
         const userId = req.user?.id;
-        const user = await User.findById(userId).select('username isOnline lastSeen profilePicture');
+        const user = await User.findById(userId).select('username email isOnline lastSeen profilePicture');
 
         if (!user) return res.status(404).json({ message: 'User not found' });
 
@@ -236,7 +237,8 @@ exports.getCurrentUser = async (req, res) => {
             email: user.email,
             isOnline: user.isOnline,
             lastSeen: user.lastSeen,
-            profilePicture: user.profilePicture ? `/api/uploads/${path.basename(user.profilePicture)}` : null
+            // CHANGED: Direct Cloudinary URL - no path manipulation needed
+            profilePicture: user.profilePicture || null
         });
     } catch (error) {
         console.error('Error fetching current user:', error);

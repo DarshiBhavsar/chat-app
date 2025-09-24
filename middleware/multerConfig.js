@@ -1,19 +1,33 @@
 const multer = require('multer');
-const path = require('path');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-// Configure storage
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'uploads'); // Specify the folder to save uploaded files
-    },
-    filename: function (req, file, cb) {
-        // Ensure file names are unique
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+// Configure Cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Configure Cloudinary storage
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'chat-app-uploads', // Folder name in Cloudinary
+        allowed_formats: ['jpeg', 'png', 'gif', 'jpg'],
+        transformation: [
+            { width: 500, height: 500, crop: 'limit' }, // Auto-resize images
+            { quality: 'auto' } // Auto-optimize quality
+        ],
+        public_id: (req, file) => {
+            // Generate unique filename
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            return file.fieldname + '-' + uniqueSuffix;
+        }
     }
 });
 
-// Filter file types
+// Filter file types (same as before)
 const fileFilter = (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/jpg'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -23,7 +37,7 @@ const fileFilter = (req, file, cb) => {
     }
 };
 
-// Set up Multer
+// Set up Multer with Cloudinary storage
 const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
