@@ -74,6 +74,7 @@ exports.getAllUsers = async (req, res) => {
                 email: user.email,
                 isOnline: user.isOnline,
                 lastSeen: user.lastSeen,
+                // ✅ FIXED: Return direct Cloudinary URL instead of transforming it
                 profilePicture: user.profilePicture || null
             }));
 
@@ -86,6 +87,7 @@ exports.getAllUsers = async (req, res) => {
                 email: user.email,
                 isOnline: user.isOnline,
                 lastSeen: user.lastSeen,
+                // ✅ FIXED: Return direct Cloudinary URL instead of transforming it
                 profilePicture: user.profilePicture || null
             }));
             res.json(transformedUsers);
@@ -213,7 +215,7 @@ exports.getBlockedUsers = async (req, res) => {
             id: blockedUser._id,
             name: blockedUser.username,
             email: blockedUser.email,
-            // CHANGED: Direct Cloudinary URL - no path manipulation needed
+            // ✅ FIXED: Return direct Cloudinary URL instead of transforming it
             profilePicture: blockedUser.profilePicture || null
         }));
 
@@ -237,7 +239,7 @@ exports.getCurrentUser = async (req, res) => {
             email: user.email,
             isOnline: user.isOnline,
             lastSeen: user.lastSeen,
-            // CHANGED: Direct Cloudinary URL - no path manipulation needed
+            // ✅ FIXED: Return direct Cloudinary URL instead of transforming it
             profilePicture: user.profilePicture || null
         });
     } catch (error) {
