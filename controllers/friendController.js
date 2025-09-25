@@ -294,7 +294,7 @@ exports.getFriends = async (req, res) => {
             id: friend._id,
             name: friend.username,
             email: friend.email,
-            profilePicture: friend.profilePicture ? `/uploads/${path.basename(friend.profilePicture)}` : null,
+            profilePicture: friend.profilePicture || null,
             online: friend.isOnline,
             lastSeen: friend.lastSeen
         }));
@@ -321,7 +321,7 @@ exports.getFriendsList = async (req, res) => {
             id: friend._id,
             name: friend.username,
             email: friend.email,
-            profilePicture: friend.profilePicture ? `/uploads/${path.basename(friend.profilePicture)}` : null,
+            profilePicture: friend.profilePicture || null,
             online: friend.isOnline,
             lastSeen: friend.lastSeen,
             friendshipStatus: 'friends'
@@ -417,7 +417,7 @@ exports.searchUsers = async (req, res) => {
                 id: user._id,
                 name: user.username,
                 email: user.email,
-                profilePicture: user.profilePicture ? `/uploads/${path.basename(user.profilePicture)}` : null,
+                profilePicture: user.profilePicture || null,
                 friendshipStatus
             };
         });
