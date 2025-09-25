@@ -74,7 +74,7 @@ exports.getAllUsers = async (req, res) => {
                 email: user.email,
                 isOnline: user.isOnline,
                 lastSeen: user.lastSeen,
-                profilePicture: user.profilePicture ? `/api/uploads/${path.basename(user.profilePicture)}` : null
+                profilePicture: user.profilePicture || null
             }));
 
             res.json(transformedUsers);
@@ -86,7 +86,7 @@ exports.getAllUsers = async (req, res) => {
                 email: user.email,
                 isOnline: user.isOnline,
                 lastSeen: user.lastSeen,
-                profilePicture: user.profilePicture ? `/api/uploads/${path.basename(user.profilePicture)}` : null
+                profilePicture: user.profilePicture || null
             }));
             res.json(transformedUsers);
         }
