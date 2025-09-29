@@ -205,46 +205,66 @@ exports.getAllUsers = async (req, res) => {
 // Upload group picture
 exports.uploadGroupPicture = async (req, res) => {
     try {
+        console.log('📸 uploadGroupPicture called');
+        console.log('Params:', req.params);
+        console.log('User:', req.user);
+        console.log('File:', req.file);
+
         const { groupId } = req.params;
         const userId = req.user.id;
 
         if (!req.file) {
+            console.error('❌ No file uploaded');
             return res.status(400).json({ message: 'No file uploaded' });
         }
 
-        // Get current group and check if user is a member/admin
+        console.log('🔍 Finding group:', groupId);
         const group = await Group.findById(groupId);
         if (!group) {
+            console.error('❌ Group not found');
             return res.status(404).json({ message: 'Group not found' });
         }
 
+        console.log('👥 Group members:', group.members);
+        console.log('🔑 Checking membership for userId:', userId);
+
         // Check if user is a member of the group
-        const isMember = group.members.some(member =>
-            member.userId?.toString() === userId || member.toString() === userId
-        );
+        const isMember = group.members.some(member => {
+            const memberId = member.userId?.toString() || member.toString();
+            console.log('Comparing:', memberId, 'with', userId);
+            return memberId === userId;
+        });
+
+        console.log('✅ Is member:', isMember);
 
         if (!isMember) {
+            console.error('❌ User not a member');
             return res.status(403).json({ message: 'You are not a member of this group' });
         }
 
         // Delete old group picture from Cloudinary if it exists
         if (group.profilePicture) {
+            console.log('🗑️ Deleting old picture:', group.profilePicture);
             await deleteFromCloudinary(group.profilePicture);
         }
 
         // Get Cloudinary URL from uploaded file
-        const imageUrl = req.file.path; // Full Cloudinary URL
+        const imageUrl = req.file.path;
+        console.log('☁️ Cloudinary URL:', imageUrl);
 
-        // Update group in database with Cloudinary URL
+        // Update group in database
         const updatedGroup = await Group.findByIdAndUpdate(
             groupId,
             { profilePicture: imageUrl },
             { new: true }
         ).populate('members', 'username email profilePicture');
 
-        // Emit socket event for real-time updates
+        console.log('✅ Group updated successfully');
+
+        // Emit socket event
         const io = req.app.get('io');
         if (io) {
+            console.log('📡 Emitting socket event');
             io.to(`group_${groupId}`).emit('group_picture_updated', {
                 groupId: updatedGroup._id.toString(),
                 groupName: updatedGroup.name,
@@ -272,8 +292,13 @@ exports.uploadGroupPicture = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error uploading group picture:', error);
-        res.status(500).json({ message: 'Server Error', error: error.message });
+        console.error('❌ Error in uploadGroupPicture:', error);
+        console.error('Stack:', error.stack);
+        res.status(500).json({
+            message: 'Server Error',
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 };
 
