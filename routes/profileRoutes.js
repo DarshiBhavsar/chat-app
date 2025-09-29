@@ -22,7 +22,24 @@ router.delete('/picture', verifyToken, removeProfilePicture);
 router.put('/update', verifyToken, updateUserProfile); // Changed from '/users/:id' to '/update'
 
 // Group routes (with explicit 'group' prefix to avoid conflicts)
-router.post('/group/:groupId/picture', verifyToken, upload.single('profilePicture'), uploadGroupPicture);
+router.post('/group/:groupId/picture', verifyToken, (req, res, next) => {
+    console.log('📸 Group picture upload route hit');
+    console.log('GroupId:', req.params.groupId);
+    console.log('User:', req.user?.id);
+
+    upload.single('profilePicture')(req, res, (err) => {
+        if (err) {
+            console.error('❌ Multer error:', err);
+            return res.status(400).json({
+                message: 'File upload error',
+                error: err.message
+            });
+        }
+
+        console.log('✅ Multer processed file:', req.file ? 'Yes' : 'No');
+        uploadGroupPicture(req, res);
+    });
+});
 router.delete('/group/:groupId/picture', verifyToken, removeGroupPicture);
 router.get('/group/:groupId', verifyToken, getGroupProfile);
 
