@@ -37,14 +37,14 @@ router.post('/upload-image', authenticateToken, upload.array('image'), (req, res
         return res.status(400).json({ message: 'No image uploaded' });
     }
 
-    // ✅ Use file.path which contains the full Cloudinary URL
+    // Use file.path which contains the Cloudinary URL
     const imageUrls = req.files.map(file => file.path);
 
-    console.log('Uploaded images to Cloudinary:', imageUrls); // For debugging
+    console.log('Cloudinary upload response:', req.files);
+    console.log('URLs being returned:', imageUrls);
 
     res.status(200).json({ imageUrls });
 });
-
 router.post('/upload-document', authenticateToken, uploadDocument.array('document', 5), (req, res) => {
     if (!req.files || req.files.length === 0) {
         return res.status(400).json({ message: 'No document uploaded' });
