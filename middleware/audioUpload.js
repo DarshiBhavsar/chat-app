@@ -1,25 +1,37 @@
 const multer = require('multer');
-const path = require('path');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-// Configure storage for audio files
-const audioStorage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'audio'); // Folder for audio files
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+// Configure Cloudinary (if not already configured globally)
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Configure Cloudinary storage for audio
+const audioStorage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'chat-app-uploads/audio',
+        resource_type: 'video', // Cloudinary stores audio as 'video' resource type
+        allowed_formats: ['mp3', 'wav', 'webm', 'ogg', 'm4a', 'aac'],
+        public_id: (req, file) => {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            return 'audio-' + uniqueSuffix;
+        }
     }
 });
 
 // Filter only audio files
 const audioFileFilter = (req, file, cb) => {
     const allowedTypes = [
-        'audio/mpeg',       // .mp3
-        'audio/wav',        // .wav
-        'audio/webm',       // .webm
-        'audio/ogg',        // .ogg
-        'audio/mp4'         // .m4a or similar
+        'audio/mpeg',
+        'audio/wav',
+        'audio/webm',
+        'audio/ogg',
+        'audio/mp4',
+        'audio/aac'
     ];
     if (allowedTypes.includes(file.mimetype)) {
         cb(null, true);
@@ -28,12 +40,11 @@ const audioFileFilter = (req, file, cb) => {
     }
 };
 
-// Set up Multer for audio
 const audioUpload = multer({
     storage: audioStorage,
     fileFilter: audioFileFilter,
     limits: {
-        fileSize: 10 * 1024 * 1024 // 10MB limit for audio
+        fileSize: 10 * 1024 * 1024 // 10MB
     }
 });
 
