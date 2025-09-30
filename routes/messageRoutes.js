@@ -70,13 +70,27 @@ router.post('/upload-audio', authenticateToken, audioUpload.single('audio'), (re
 
 // ✅ FIXED: Video upload - use file.path
 router.post('/upload-video', authenticateToken, uploadVideo.single('video'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ error: 'No video file uploaded' });
-    }
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No video file uploaded' });
+        }
 
-    const videoUrl = req.file.path; // Changed from /videos/${file.filename}
-    console.log('✅ Video uploaded to Cloudinary:', videoUrl);
-    res.json({ videoUrls: [videoUrl] });
+        const videoUrl = req.file.path;
+        console.log('✅ Video uploaded to Cloudinary:', videoUrl);
+        console.log('Video details:', {
+            originalname: req.file.originalname,
+            size: req.file.size,
+            mimetype: req.file.mimetype
+        });
+
+        res.json({ videoUrls: [videoUrl] });
+    } catch (error) {
+        console.error('❌ Video upload error:', error);
+        res.status(500).json({
+            error: 'Failed to upload video',
+            message: error.message
+        });
+    }
 });
 
 // Fetch messages routes - PROTECTED  
