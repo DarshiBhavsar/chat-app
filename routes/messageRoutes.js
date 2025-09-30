@@ -29,37 +29,38 @@ const {
 
 // Send message routes - PROTECTED
 router.post('/send', authenticateToken, sendMessage);
-router.post('/group/send', authenticateToken, sendGroupMessage); // FIXED: Added authentication
+router.post('/group/send', authenticateToken, sendGroupMessage);
 
-// File upload routes - PROTECTED
+// ✅ File upload routes - ALL FIXED TO USE CLOUDINARY
 router.post('/upload-image', authenticateToken, upload.array('image'), (req, res) => {
     if (!req.files || req.files.length === 0) {
         return res.status(400).json({ message: 'No image uploaded' });
     }
 
-    // Use file.path which contains the Cloudinary URL
     const imageUrls = req.files.map(file => file.path);
-
-    console.log('Cloudinary upload response:', req.files);
-    console.log('URLs being returned:', imageUrls);
-
+    console.log('✅ Images uploaded to Cloudinary:', imageUrls);
     res.status(200).json({ imageUrls });
 });
+
+// ✅ FIXED: Document upload - use file.path
 router.post('/upload-document', authenticateToken, uploadDocument.array('document', 5), (req, res) => {
     if (!req.files || req.files.length === 0) {
         return res.status(400).json({ message: 'No document uploaded' });
     }
 
-    const documentUrls = req.files.map(file => `/documents/${file.filename}`);
+    const documentUrls = req.files.map(file => file.path); // Changed from /documents/${file.filename}
+    console.log('✅ Documents uploaded to Cloudinary:', documentUrls);
     res.status(200).json({ documentUrls });
 });
 
+// ✅ FIXED: Audio upload - use file.path
 router.post('/upload-audio', authenticateToken, audioUpload.single('audio'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: 'No audio file uploaded' });
     }
 
-    const audioUrl = `${req.protocol}://${req.get('host')}/audio/${req.file.filename}`;
+    const audioUrl = req.file.path; // Changed from constructed URL
+    console.log('✅ Audio uploaded to Cloudinary:', audioUrl);
 
     res.status(200).json({
         message: 'Audio uploaded successfully',
@@ -67,22 +68,24 @@ router.post('/upload-audio', authenticateToken, audioUpload.single('audio'), (re
     });
 });
 
+// ✅ FIXED: Video upload - use file.path
 router.post('/upload-video', authenticateToken, uploadVideo.single('video'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No video file uploaded' });
     }
 
-    const videoUrl = `/videos/${req.file.filename}`;
+    const videoUrl = req.file.path; // Changed from /videos/${file.filename}
+    console.log('✅ Video uploaded to Cloudinary:', videoUrl);
     res.json({ videoUrls: [videoUrl] });
 });
 
 // Fetch messages routes - PROTECTED  
 router.get('/fetch/:senderId/:recipientId', authenticateToken, getMessages);
-router.get('/fetch/group/:groupId', authenticateToken, getGroupMessages); // FIXED: Added authentication
+router.get('/fetch/group/:groupId', authenticateToken, getGroupMessages);
 
 // Delete message routes - PROTECTED
-router.delete('/delete/:messageId', authenticateToken, deleteMessage); // Hard delete
-router.put('/soft-delete/:messageId', authenticateToken, softDeleteMessage); // Soft delete
+router.delete('/delete/:messageId', authenticateToken, deleteMessage);
+router.put('/soft-delete/:messageId', authenticateToken, softDeleteMessage);
 
 // Clear chat routes - PROTECTED
 router.delete('/clear-private/:recipientId', authenticateToken, clearPrivateChat);
@@ -100,10 +103,7 @@ router.post('/mark-delivered/:messageId', authenticateToken, markMessageDelivere
 router.post('/mark-read/:messageId', authenticateToken, markMessageRead);
 router.post('/mark-multiple-read', authenticateToken, markMultipleMessagesRead);
 router.get('/status/:messageId', authenticateToken, getMessageStatus);
-
 router.post('/status-batch', authenticateToken, batchStatusCheck);
-
-// Optional: Add real-time status update route
 router.put('/status-update/:messageId', authenticateToken, updateMessageStatusRealTime);
 
 module.exports = router;

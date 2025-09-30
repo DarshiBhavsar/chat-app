@@ -1,25 +1,33 @@
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-// Document storage config
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        const folder = 'documents';
-        fs.mkdirSync(folder, { recursive: true });
-        cb(null, folder);
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+// Configure Cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Configure Cloudinary storage for documents
+const documentStorage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'chat-app-uploads/documents',
+        resource_type: 'raw', // Use 'raw' for non-image/video files
+        allowed_formats: ['pdf', 'doc', 'docx', 'txt'],
+        public_id: (req, file) => {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            return 'document-' + uniqueSuffix;
+        }
     }
 });
 
 const documentFilter = (req, file, cb) => {
     const allowedTypes = [
         'application/pdf',
-        'application/msword', // .doc
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'text/plain'
     ];
     if (allowedTypes.includes(file.mimetype)) {
@@ -30,9 +38,11 @@ const documentFilter = (req, file, cb) => {
 };
 
 const uploadDocument = multer({
-    storage,
+    storage: documentStorage,
     fileFilter: documentFilter,
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10MB
+    }
 });
 
 module.exports = uploadDocument;
