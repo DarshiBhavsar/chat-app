@@ -4,31 +4,28 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 const Status = require('../models/status');
 const User = require('../models/user');
+const cloudinary = require('../config/cloudinaryConfig');
 
 const filterViewersForUser = (status, currentUser) => {
     if (!status.viewers || !currentUser.friends) {
         return status;
     }
 
-    // Get list of users who are still friends and not blocked
     const allowedUserIds = [
-        currentUser._id.toString(), // Include self
+        currentUser._id.toString(),
         ...currentUser.friends.map(id => id.toString())
     ];
 
-    // Get blocked users list
     const blockedUserIds = [
         ...(currentUser.blockedUsers || []).map(id => id.toString()),
         ...(currentUser.blockedBy || []).map(id => id.toString())
     ];
 
-    // Filter viewers to only include friends who are not blocked
     const filteredViewers = status.viewers.filter(viewer => {
         const viewerIdStr = viewer.userId._id.toString();
         return allowedUserIds.includes(viewerIdStr) && !blockedUserIds.includes(viewerIdStr);
     });
 
-    // Also filter viewedBy array
     const filteredViewedBy = status.viewedBy.filter(viewerId => {
         const viewerIdStr = viewerId.toString();
         return allowedUserIds.includes(viewerIdStr) && !blockedUserIds.includes(viewerIdStr);
@@ -41,14 +38,12 @@ const filterViewersForUser = (status, currentUser) => {
     };
 };
 
-
-// Get all statuses for user's feed - UPDATED with friend/block filtering
+// Get all statuses for user's feed
 exports.getAllStatuses = async (req, res) => {
     try {
         const userId = new mongoose.Types.ObjectId(req.user.id);
         console.log('📋 Getting all statuses for user:', userId);
 
-        // First, get the current user with their friends and blocked users
         const currentUser = await User.findById(userId)
             .select('friends blockedUsers blockedBy')
             .lean();
@@ -57,10 +52,7 @@ exports.getAllStatuses = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        // Get list of users whose statuses we should show (friends only)
         const friendIds = currentUser.friends || [];
-
-        // Get list of users we should exclude (blocked users and users who blocked us)
         const blockedUserIds = [
             ...(currentUser.blockedUsers || []),
             ...(currentUser.blockedBy || [])
@@ -68,13 +60,11 @@ exports.getAllStatuses = async (req, res) => {
 
         console.log(`📊 User has ${friendIds.length} friends, ${blockedUserIds.length} blocked relationships`);
 
-        // Use parallel queries for better performance
         const [statuses, myStatusesQuery] = await Promise.all([
-            // Get statuses only from friends, excluding blocked users
             Status.find({
                 userId: {
-                    $in: friendIds,  // Only friends
-                    $nin: blockedUserIds  // Exclude blocked users
+                    $in: friendIds,
+                    $nin: blockedUserIds
                 },
                 isActive: true,
                 expiresAt: { $gt: new Date() }
@@ -87,7 +77,6 @@ exports.getAllStatuses = async (req, res) => {
                 .sort({ createdAt: -1 })
                 .lean(),
 
-            // Get user's own statuses
             Status.find({
                 userId: userId,
                 isActive: true,
@@ -104,9 +93,7 @@ exports.getAllStatuses = async (req, res) => {
 
         console.log(`📊 Found ${statuses.length} friend statuses, ${myStatusesQuery.length} my statuses`);
 
-        // Helper function to format status with enhanced viewer details
         const formatStatusWithViewers = (status) => {
-            // Filter viewers based on current friend/block status
             const filteredStatus = filterViewersForUser(status, currentUser);
 
             return {
@@ -127,10 +114,9 @@ exports.getAllStatuses = async (req, res) => {
                 isActive: filteredStatus.isActive
             };
         };
-        // Process my statuses with enhanced viewer data
+
         const myStatuses = myStatusesQuery.map(formatStatusWithViewers);
 
-        // Group other users' statuses (only friends now)
         const statusGroupsMap = new Map();
 
         statuses.forEach(status => {
@@ -151,12 +137,10 @@ exports.getAllStatuses = async (req, res) => {
             const group = statusGroupsMap.get(userIdStr);
             group.statuses.push(statusObj);
 
-            // Check if user has viewed this status
             if (!status.viewedBy || !status.viewedBy.some(viewerId => viewerId.toString() === userId.toString())) {
                 group.hasUnviewed = true;
             }
 
-            // Update last status time if more recent
             if (status.createdAt > group.lastStatusTime) {
                 group.lastStatusTime = status.createdAt;
             }
@@ -177,7 +161,7 @@ exports.getAllStatuses = async (req, res) => {
     }
 };
 
-// Create new status
+// Create new status - FIXED to emit to uploader too
 exports.createStatus = async (req, res) => {
     try {
         const userId = new mongoose.Types.ObjectId(req.user._id || req.user.id);
@@ -186,18 +170,58 @@ exports.createStatus = async (req, res) => {
         console.log('📤 Creating new status for user:', userId);
 
         let statusContent = {};
+        let uploadedFileUrl = null;
 
+        // Handle file upload (image or video)
         if (req.file) {
-            const fileUrl = `/story/${req.file.filename}`;
-            const fileType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
+            console.log('📁 File detected:', req.file.originalname, req.file.mimetype);
 
-            statusContent = {
-                type: fileType,
-                url: fileUrl,
-                text: text || '',
-                backgroundColor: backgroundColor || '#000000'
-            };
+            try {
+                // Upload to Cloudinary
+                const result = await new Promise((resolve, reject) => {
+                    const uploadStream = cloudinary.uploader.upload_stream(
+                        {
+                            folder: 'chat-app-uploads',
+                            resource_type: req.file.mimetype.startsWith('video/') ? 'video' : 'image',
+                            transformation: req.file.mimetype.startsWith('video/')
+                                ? [{ quality: 'auto', fetch_format: 'auto' }]
+                                : [{ quality: 'auto:good', fetch_format: 'auto' }]
+                        },
+                        (error, result) => {
+                            if (error) reject(error);
+                            else resolve(result);
+                        }
+                    );
+                    uploadStream.end(req.file.buffer);
+                });
+
+                uploadedFileUrl = result.secure_url;
+                console.log('☁️ File uploaded to Cloudinary:', uploadedFileUrl);
+
+                // Delete local file if it exists
+                if (req.file.path && fs.existsSync(req.file.path)) {
+                    fs.unlinkSync(req.file.path);
+                    console.log('🗑️ Local file deleted');
+                }
+
+                const fileType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
+                statusContent = {
+                    type: fileType,
+                    url: uploadedFileUrl,
+                    text: text || '',
+                    backgroundColor: backgroundColor || '#000000'
+                };
+
+            } catch (uploadError) {
+                console.error('❌ Cloudinary upload failed:', uploadError);
+                return res.status(500).json({
+                    message: 'Failed to upload file to cloud storage',
+                    error: uploadError.message
+                });
+            }
+
         } else if (content) {
+            // Handle text/JSON content
             const parsed = typeof content === 'string' ? JSON.parse(content) : content;
 
             statusContent = {
@@ -210,12 +234,13 @@ exports.createStatus = async (req, res) => {
             return res.status(400).json({ message: 'No content or file provided' });
         }
 
+        // Create status in database
         const newStatus = new Status({
             userId,
             content: statusContent,
             viewedBy: [],
             isActive: true,
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hrs
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours
         });
 
         await newStatus.save();
@@ -225,24 +250,25 @@ exports.createStatus = async (req, res) => {
             id: newStatus._id.toString(),
             userId: newStatus.userId._id.toString(),
             userName: newStatus.userId.username,
-            profilePicture: newStatus.userId.profilePicture ? `/uploads/${path.basename(newStatus.userId.profilePicture)}` : null,
+            profileImage: newStatus.userId.profilePicture ? `/uploads/${path.basename(newStatus.userId.profilePicture)}` : null,
             content: newStatus.content,
             createdAt: newStatus.createdAt,
             expiresAt: newStatus.expiresAt,
             viewedBy: [],
+            viewers: [],
             isActive: newStatus.isActive
         };
 
-        // ✅ Emit socket events BEFORE sending response
+        // ✅ CRITICAL FIX: Emit to uploader FIRST, then to friends
         const currentUser = await User.findById(userId).select('friends').lean();
         const io = req.app.get('io');
 
         if (io) {
-            // Emit to the uploader (yourself)
+            // 1. Emit to yourself (the uploader) FIRST
             io.to(userId.toString()).emit('status_uploaded', responseStatus);
-            console.log('✅ Emitted status to uploader:', userId.toString());
+            console.log('✅ Emitted status to uploader (yourself):', userId.toString());
 
-            // Emit to friends
+            // 2. Then emit to friends
             if (currentUser && currentUser.friends) {
                 currentUser.friends.forEach(friendId => {
                     io.to(friendId.toString()).emit('status_uploaded', responseStatus);
@@ -253,7 +279,7 @@ exports.createStatus = async (req, res) => {
 
         console.log('✅ Status created:', responseStatus.id);
 
-        // Send response last
+        // Send response
         res.status(201).json(responseStatus);
 
     } catch (error) {
@@ -270,7 +296,6 @@ exports.deleteStatus = async (req, res) => {
 
         console.log(`🗑️ Deleting status ${statusId} by user ${userId}`);
 
-        // Validate statusId format
         if (!mongoose.Types.ObjectId.isValid(statusId)) {
             return res.status(400).json({ message: 'Invalid status ID format' });
         }
@@ -284,12 +309,29 @@ exports.deleteStatus = async (req, res) => {
             return res.status(404).json({ message: 'Status not found or unauthorized' });
         }
 
-        // Delete associated file if exists
+        // Delete from Cloudinary if it's a cloud-hosted file
         if (status.content.url && (status.content.type === 'image' || status.content.type === 'video')) {
-            const filePath = path.join(__dirname, '..', status.content.url);
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-                console.log('🗑️ Associated file deleted:', filePath);
+            if (status.content.url.includes('cloudinary.com')) {
+                try {
+                    // Extract public ID from Cloudinary URL
+                    const urlParts = status.content.url.split('/');
+                    const fileWithExt = urlParts[urlParts.length - 1];
+                    const publicId = `chat-app-uploads/${fileWithExt.split('.')[0]}`;
+
+                    await cloudinary.uploader.destroy(publicId, {
+                        resource_type: status.content.type
+                    });
+                    console.log('☁️ Cloudinary file deleted:', publicId);
+                } catch (cloudError) {
+                    console.error('⚠️ Failed to delete from Cloudinary:', cloudError);
+                }
+            } else {
+                // Delete local file if it exists
+                const filePath = path.join(__dirname, '..', status.content.url);
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                    console.log('🗑️ Local file deleted:', filePath);
+                }
             }
         }
 
@@ -323,7 +365,16 @@ exports.deleteStatus = async (req, res) => {
     }
 };
 
-// Mark single status as viewed - UPDATED with friend/block check
+// Additional helper function for safer array access
+const getUserArrays = (user) => {
+    return {
+        friends: Array.isArray(user.friends) ? user.friends : [],
+        blockedUsers: Array.isArray(user.blockedUsers) ? user.blockedUsers : [],
+        blockedBy: Array.isArray(user.blockedBy) ? user.blockedBy : []
+    };
+};
+
+// Mark single status as viewed
 exports.markAsViewed = async (req, res) => {
     try {
         const { statusId } = req.params;
@@ -335,7 +386,6 @@ exports.markAsViewed = async (req, res) => {
             return res.status(400).json({ message: 'Invalid status ID format' });
         }
 
-        // Get current user's friend and block lists
         const currentUser = await User.findById(userId)
             .select('friends blockedUsers blockedBy')
             .lean();
@@ -358,7 +408,6 @@ exports.markAsViewed = async (req, res) => {
         const statusOwnerId = status.userId._id.toString();
         const currentUserIdStr = userId.toString();
 
-        // Don't mark own status as viewed
         if (statusOwnerId === currentUserIdStr) {
             const statusData = {
                 id: status._id.toString(),
@@ -387,10 +436,8 @@ exports.markAsViewed = async (req, res) => {
             });
         }
 
-        // FIXED: Use helper function to get arrays with proper defaults
         const { friends: userFriends, blockedUsers: userBlockedUsers, blockedBy: userBlockedBy } = getUserArrays(currentUser);
 
-        // Check if status owner is a friend and not blocked
         const isStatusOwnerFriend = userFriends.some(friendId =>
             friendId.toString() === statusOwnerId
         );
@@ -453,14 +500,12 @@ exports.markAsViewed = async (req, res) => {
                 isActive: updatedStatus.isActive
             };
 
-            // Emit real-time update to status owner
             const io = req.app.get('io');
             if (io) {
                 io.to(updatedStatus.userId._id.toString()).emit('status_viewed', {
                     statusId: updatedStatus._id.toString(),
-                    viewerName: updatedStatus.viewers[updatedStatus.viewers.length - 1].userId.username,
-                    totalViews: updatedStatus.viewers.length,
-                    viewedAt: new Date()
+                    viewerId: userId.toString(),
+                    updatedStatus: updatedStatusData
                 });
             }
 
@@ -513,7 +558,7 @@ exports.markAsViewed = async (req, res) => {
     }
 };
 
-// Mark multiple statuses as viewed (bulk operation) - UPDATED with friend/block check
+// Mark multiple statuses as viewed (bulk operation)
 exports.markMultipleAsViewed = async (req, res) => {
     try {
         const { statusIds } = req.body;
@@ -523,7 +568,6 @@ exports.markMultipleAsViewed = async (req, res) => {
             return res.status(400).json({ message: 'statusIds must be a non-empty array' });
         }
 
-        // Validate all statusIds
         const validStatusIds = statusIds.filter(id => mongoose.Types.ObjectId.isValid(id));
         if (validStatusIds.length === 0) {
             return res.status(400).json({ message: 'No valid status IDs provided' });
@@ -531,7 +575,6 @@ exports.markMultipleAsViewed = async (req, res) => {
 
         console.log(`📦 Bulk viewing ${validStatusIds.length} statuses by user ${userId}`);
 
-        // Get current user's friend and block lists
         const currentUser = await User.findById(userId)
             .select('friends blockedUsers blockedBy')
             .lean();
@@ -540,16 +583,14 @@ exports.markMultipleAsViewed = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        // Use MongoDB's bulk operations for better performance
         const objectIds = validStatusIds.map(id => new mongoose.Types.ObjectId(id));
 
-        // Find statuses that are from friends, not blocked, and user hasn't viewed yet
         const statusesToUpdate = await Status.find({
             _id: { $in: objectIds },
             userId: {
-                $ne: userId,  // Not own status
-                $in: currentUser.friends,  // Only friends
-                $nin: [...(currentUser.blockedUsers || []), ...(currentUser.blockedBy || [])]  // Not blocked
+                $ne: userId,
+                $in: currentUser.friends,
+                $nin: [...(currentUser.blockedUsers || []), ...(currentUser.blockedBy || [])]
             },
             viewedBy: { $ne: userId },
             isActive: true,
@@ -559,7 +600,6 @@ exports.markMultipleAsViewed = async (req, res) => {
         const updatedStatuses = [];
 
         if (statusesToUpdate.length > 0) {
-            // Use bulk update operation
             const bulkOps = statusesToUpdate.map(status => ({
                 updateOne: {
                     filter: { _id: status._id },
@@ -577,12 +617,10 @@ exports.markMultipleAsViewed = async (req, res) => {
 
             await Status.bulkWrite(bulkOps);
 
-            // Get updated statuses with new view counts
             const updatedStatusDocs = await Status.find({
                 _id: { $in: statusesToUpdate.map(s => s._id) }
             }).populate('userId', 'username profilePicture');
 
-            // Format response data
             updatedStatusDocs.forEach(status => {
                 updatedStatuses.push({
                     id: status._id.toString(),
@@ -618,12 +656,11 @@ exports.markMultipleAsViewed = async (req, res) => {
     }
 };
 
-// Get all users (for displaying in UI) - UPDATED to only show friends
+// Get all users (only friends)
 exports.getAllUsers = async (req, res) => {
     try {
         const userId = new mongoose.Types.ObjectId(req.user.id || req.user._id);
 
-        // Get current user with friends list
         const currentUser = await User.findById(userId)
             .select('friends blockedUsers blockedBy')
             .lean();
@@ -632,15 +669,13 @@ exports.getAllUsers = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        // Only return friends, excluding blocked users
         const users = await User.find({
             _id: {
-                $in: currentUser.friends,  // Only friends
-                $nin: [...(currentUser.blockedUsers || []), ...(currentUser.blockedBy || [])]  // Exclude blocked
+                $in: currentUser.friends,
+                $nin: [...(currentUser.blockedUsers || []), ...(currentUser.blockedBy || [])]
             }
         }, 'username email _id isOnline lastSeen profilePicture').lean();
 
-        // Format users with proper profile picture URLs
         const formattedUsers = users.map(user => ({
             ...user,
             profilePicture: user.profilePicture ? `/uploads/${path.basename(user.profilePicture)}` : null
@@ -659,7 +694,6 @@ exports.getMyStatuses = async (req, res) => {
     try {
         const userId = new mongoose.Types.ObjectId(req.user.id || req.user._id);
 
-        // Get current user with friends and blocked users
         const currentUser = await User.findById(userId)
             .select('friends blockedUsers blockedBy')
             .lean();
@@ -681,14 +715,13 @@ exports.getMyStatuses = async (req, res) => {
             .lean();
 
         const formattedStatuses = myStatuses.map(status => {
-            // Filter viewers for each status
             const filteredStatus = filterViewersForUser(status, currentUser);
 
             return {
                 id: filteredStatus._id.toString(),
                 userId: filteredStatus.userId._id.toString(),
                 userName: filteredStatus.userId.username,
-                profilePicture: filteredStatus.userId.profilePicture ? `/uploads/${path.basename(filteredStatus.userId.profilePicture)}` : null,
+                profileImage: filteredStatus.userId.profilePicture ? `/uploads/${path.basename(filteredStatus.userId.profilePicture)}` : null,
                 content: filteredStatus.content,
                 createdAt: filteredStatus.createdAt,
                 expiresAt: filteredStatus.expiresAt,
@@ -718,7 +751,7 @@ exports.getMyStatuses = async (req, res) => {
     }
 };
 
-// Get specific status by ID - UPDATED with friend/block check
+// Get specific status by ID
 exports.getStatusById = async (req, res) => {
     try {
         const { statusId } = req.params;
@@ -728,7 +761,6 @@ exports.getStatusById = async (req, res) => {
             return res.status(400).json({ message: 'Invalid status ID format' });
         }
 
-        // Get current user's friend and block lists
         const currentUser = await User.findById(userId)
             .select('friends blockedUsers blockedBy')
             .lean();
@@ -750,7 +782,6 @@ exports.getStatusById = async (req, res) => {
         const statusOwnerId = status.userId._id.toString();
         const currentUserIdStr = userId.toString();
 
-        // Check if it's own status or if status owner is a friend and not blocked
         const isOwnStatus = statusOwnerId === currentUserIdStr;
         const isStatusOwnerFriend = currentUser.friends.some(friendId =>
             friendId.toString() === statusOwnerId
