@@ -180,7 +180,46 @@ exports.getAllStatuses = async (req, res) => {
 // Create new status
 exports.createStatus = async (req, res) => {
     try {
-        // ... existing code to create status ...
+        const userId = new mongoose.Types.ObjectId(req.user._id || req.user.id);
+        const { text, backgroundColor, content } = req.body;
+
+        console.log('📤 Creating new status for user:', userId);
+
+        let statusContent = {};
+
+        if (req.file) {
+            const fileUrl = `/story/${req.file.filename}`;
+            const fileType = req.file.mimetype.startsWith('video/') ? 'video' : 'image';
+
+            statusContent = {
+                type: fileType,
+                url: fileUrl,
+                text: text || '',
+                backgroundColor: backgroundColor || '#000000'
+            };
+        } else if (content) {
+            const parsed = typeof content === 'string' ? JSON.parse(content) : content;
+
+            statusContent = {
+                type: parsed.type || 'text',
+                text: parsed.text || '',
+                backgroundColor: parsed.backgroundColor || '#000000',
+                url: parsed.url || ''
+            };
+        } else {
+            return res.status(400).json({ message: 'No content or file provided' });
+        }
+
+        const newStatus = new Status({
+            userId,
+            content: statusContent,
+            viewedBy: [],
+            isActive: true,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hrs
+        });
+
+        await newStatus.save();
+        await newStatus.populate('userId', 'username profilePicture');
 
         const responseStatus = {
             id: newStatus._id.toString(),
@@ -194,22 +233,27 @@ exports.createStatus = async (req, res) => {
             isActive: newStatus.isActive
         };
 
-        // Emit to friends
+        // ✅ Emit socket events BEFORE sending response
         const currentUser = await User.findById(userId).select('friends').lean();
         const io = req.app.get('io');
-        if (io) {
-            // ✅ Emit to the uploader first (yourself)
-            io.to(userId.toString()).emit('status_uploaded', responseStatus);
 
-            // Then emit to friends
-            if (currentUser.friends) {
+        if (io) {
+            // Emit to the uploader (yourself)
+            io.to(userId.toString()).emit('status_uploaded', responseStatus);
+            console.log('✅ Emitted status to uploader:', userId.toString());
+
+            // Emit to friends
+            if (currentUser && currentUser.friends) {
                 currentUser.friends.forEach(friendId => {
                     io.to(friendId.toString()).emit('status_uploaded', responseStatus);
                 });
+                console.log(`✅ Emitted status to ${currentUser.friends.length} friends`);
             }
         }
 
-        console.log('✅ Status created and emitted to self + friends:', responseStatus.id);
+        console.log('✅ Status created:', responseStatus.id);
+
+        // Send response last
         res.status(201).json(responseStatus);
 
     } catch (error) {
