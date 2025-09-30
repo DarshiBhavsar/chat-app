@@ -112,7 +112,7 @@ exports.getAllStatuses = async (req, res) => {
                 id: filteredStatus._id.toString(),
                 userId: filteredStatus.userId._id.toString(),
                 userName: filteredStatus.userId.username,
-                profileImage: filteredStatus.userId.profilePicture ? `/uploads/${path.basename(filteredStatus.userId.profilePicture)}` : null,
+                profileImage: filteredStatus.userId.profilePicture || null,
                 content: filteredStatus.content,
                 createdAt: filteredStatus.createdAt,
                 expiresAt: filteredStatus.expiresAt,
@@ -120,7 +120,7 @@ exports.getAllStatuses = async (req, res) => {
                 viewers: filteredStatus.viewers ? filteredStatus.viewers.map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
-                    profilePicture: viewer.userId.profilePicture ? `/uploads/${path.basename(viewer.userId.profilePicture)}` : null,
+                    profilePicture: viewer.userId.profilePicture || null,
                     viewedAt: viewer.viewedAt
                 })) : [],
                 isActive: filteredStatus.isActive
@@ -139,7 +139,7 @@ exports.getAllStatuses = async (req, res) => {
                 statusGroupsMap.set(userIdStr, {
                     userId: userIdStr,
                     userName: status.userId.username,
-                    profilePicture: status.userId.profilePicture ? `/uploads/${path.basename(status.userId.profilePicture)}` : null,
+                    profilePicture: status.userId.profilePicture || null,
                     statuses: [],
                     hasUnviewed: false,
                     lastStatusTime: status.createdAt
@@ -262,7 +262,7 @@ exports.createStatus = async (req, res) => {
             id: newStatus._id.toString(),
             userId: newStatus.userId._id.toString(),
             userName: newStatus.userId.username,
-            profileImage: newStatus.userId.profilePicture ? `/uploads/${path.basename(newStatus.userId.profilePicture)}` : null,
+            profileImage: newStatus.userId.profilePicture || null,
             content: newStatus.content,
             createdAt: newStatus.createdAt,
             expiresAt: newStatus.expiresAt,
