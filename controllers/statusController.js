@@ -4,7 +4,19 @@ const fs = require('fs');
 const mongoose = require('mongoose');
 const Status = require('../models/status');
 const User = require('../models/user');
-const cloudinary = require('../config/cloudinaryConfig');
+const cloudinary = require('cloudinary').v2;
+
+// Configure Cloudinary directly from environment variables
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+console.log('☁️ Cloudinary configured:', {
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    configured: !!(process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET)
+});
 
 const filterViewersForUser = (status, currentUser) => {
     if (!status.viewers || !currentUser.friends) {
