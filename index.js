@@ -1208,26 +1208,16 @@ io.on('connection', socket => {
         try {
             console.log(`🧹 Clearing group chat ${groupId} for user ${userId}`);
 
-            // Update user's last seen
             await updateLastSeen(userId);
 
-            const Message = require('./models/message');
-
-            // Option 1: Mark messages as cleared for this user only
-            const result = await Message.updateMany(
-                { groupId: groupId },
-                { $addToSet: { clearedBy: userId } }
-            );
-
-            // Emit confirmation to the user who cleared
+            // Just acknowledge - no need to emit to other group members since it's user-specific
             socket.emit('chat-cleared', {
                 type: 'group',
                 chatId: groupId,
-                modifiedCount: result.modifiedCount,
                 clearedBy: userId
             });
 
-            console.log(`✅ Group chat cleared for user ${userId}: ${result.modifiedCount} messages marked as cleared`);
+            console.log(`✅ Group chat cleared for user ${userId}`);
 
         } catch (error) {
             console.error('❌ Error clearing group chat:', error);
