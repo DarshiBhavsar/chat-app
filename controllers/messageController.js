@@ -236,32 +236,38 @@ exports.getMessages = async (req, res) => {
 
 exports.getGroupMessages = async (req, res) => {
     try {
-        const { groupId } = req.params;
+        const groupId = req.params.groupId; // ✅ use params, not query
         const currentUserId = req.user.id;
 
+        console.log("📥 Group Message API Hit");
+        console.log("✅ groupId:", groupId);
+        console.log("✅ currentUserId:", currentUserId);
+
+        // ❌ If groupId is missing
         if (!groupId) {
-            return res.status(400).json({ message: 'Group ID is required' });
+            console.log("❌ Missing groupId in request params");
+            return res.status(400).json({ message: "Group ID is required" });
         }
 
-        console.log(`📩 Fetching group messages for groupId: ${groupId}`);
-
+        // ✅ Fetch group messages
         const messages = await Message.find({
             groupId: groupId,
             isDeleted: false,
-            clearedBy: { $ne: currentUserId } // ✅ exclude cleared messages for this user
+            clearedBy: { $ne: currentUserId }
         })
-            .populate('userId', 'name profilePicture')
+            .populate("userId", "name profilePicture")
             .sort({ createdAt: 1 })
             .lean();
 
-        console.log(`✅ Found ${messages.length} group messages`);
+        console.log(`✅ Found ${messages.length} messages for group ${groupId}`);
 
+        // ✅ Format response
         const processedMessages = messages.map(msg => ({
             ...msg,
             id: msg._id.toString(),
             _id: msg._id,
             isGroup: true,
-            messageStatus: msg.messageStatus || 'sent',
+            messageStatus: msg.messageStatus || "sent",
             groupDeliveryStatus: msg.groupDeliveryStatus || [],
             profilePicture: msg.userId?.profilePicture || null,
             userProfileImage: msg.userId?.profilePicture || null
@@ -269,8 +275,11 @@ exports.getGroupMessages = async (req, res) => {
 
         return res.status(200).json(processedMessages);
     } catch (error) {
-        console.error('❌ Get group messages error:', error);
-        return res.status(500).json({ message: 'Failed to fetch group messages', error: error.message });
+        console.error("❌ Get group messages error:", error);
+        return res.status(500).json({
+            message: "Failed to fetch group messages",
+            error: error.message
+        });
     }
 };
 
