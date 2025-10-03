@@ -290,11 +290,12 @@ exports.getFriends = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
+        // ✅ FIXED: Return direct Cloudinary URL
         const friends = user.friends.map(friend => ({
             id: friend._id,
             name: friend.username,
             email: friend.email,
-            profilePicture: friend.profilePicture || null,
+            profilePicture: friend.profilePicture || null, // Direct URL, no transformation
             online: friend.isOnline,
             lastSeen: friend.lastSeen
         }));
@@ -317,11 +318,12 @@ exports.getFriendsList = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
+        // ✅ FIXED: Return direct Cloudinary URL
         const friends = user.friends.map(friend => ({
             id: friend._id,
             name: friend.username,
             email: friend.email,
-            profilePicture: friend.profilePicture || null,
+            profilePicture: friend.profilePicture || null, // Direct URL, no transformation
             online: friend.isOnline,
             lastSeen: friend.lastSeen,
             friendshipStatus: 'friends'
