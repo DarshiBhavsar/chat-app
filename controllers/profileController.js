@@ -49,51 +49,52 @@ exports.uploadProfilePicture = async (req, res) => {
             return res.status(400).json({ message: 'No file uploaded' });
         }
 
-        const user = await User.findById(userId);
+        // Upload to Cloudinary
+        const result = await cloudinary.uploader.upload(req.file.path, {
+            folder: 'profile_pictures',
+            width: 500,
+            height: 500,
+            crop: 'fill'
+        });
+
+        // Update user's profile picture in database
+        const user = await User.findByIdAndUpdate(
+            userId,
+            { profilePicture: result.secure_url },
+            { new: true }
+        ).select('-password');
+
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        if (user.profilePicture) {
-            await deleteFromCloudinary(user.profilePicture);
-        }
-
-        const imageUrl = req.file.path;
-
-        const updatedUser = await User.findByIdAndUpdate(
-            userId,
-            { profilePicture: imageUrl },
-            { new: true, select: 'username email profilePicture isOnline lastSeen about phone' }
-        );
-
+        // ✅ CRITICAL FIX: Emit socket event to notify all connected users
         const io = req.app.get('io');
         if (io) {
+            // Emit to all users who are friends with this user
             io.emit('profile_picture_updated', {
-                userId: updatedUser._id.toString(),
-                userName: updatedUser.username,
-                userEmail: updatedUser.email,
-                newProfilePicture: imageUrl,
-                fullUrl: imageUrl
+                userId: user._id.toString(),
+                userName: user.username,
+                profilePicture: result.secure_url,
+                email: user.email
             });
+
+            console.log(`📸 Profile picture update broadcasted for user ${user.username}`);
         }
 
         res.json({
             message: 'Profile picture uploaded successfully',
-            url: imageUrl,
-            imageUrl: imageUrl,
+            imageUrl: result.secure_url,
+            url: result.secure_url, // For backward compatibility
             user: {
-                id: updatedUser._id,
-                name: updatedUser.username,
-                username: updatedUser.username,
-                email: updatedUser.email,
-                profilePicture: imageUrl,
-                about: updatedUser.about,
-                phone: updatedUser.phone,
-                isOnline: updatedUser.isOnline,
-                lastSeen: updatedUser.lastSeen
+                id: user._id,
+                username: user.username,
+                email: user.email,
+                profilePicture: user.profilePicture,
+                about: user.about,
+                phone: user.phone
             }
         });
-
     } catch (error) {
         console.error('Error uploading profile picture:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
@@ -105,43 +106,38 @@ exports.removeProfilePicture = async (req, res) => {
     try {
         const userId = req.user.id;
 
-        const user = await User.findById(userId);
+        const user = await User.findByIdAndUpdate(
+            userId,
+            { $unset: { profilePicture: "" } },
+            { new: true }
+        ).select('-password');
+
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        if (user.profilePicture) {
-            await deleteFromCloudinary(user.profilePicture);
-        }
-
-        const updatedUser = await User.findByIdAndUpdate(
-            userId,
-            { $unset: { profilePicture: 1 } },
-            { new: true, select: 'username email profilePicture isOnline lastSeen about phone' }
-        );
-
+        // ✅ CRITICAL FIX: Emit socket event to notify all connected users
         const io = req.app.get('io');
         if (io) {
             io.emit('profile_picture_updated', {
-                userId: updatedUser._id.toString(),
-                userName: updatedUser.username,
-                userEmail: updatedUser.email,
-                newProfilePicture: null
+                userId: user._id.toString(),
+                userName: user.username,
+                profilePicture: null,
+                email: user.email
             });
+
+            console.log(`📸 Profile picture removal broadcasted for user ${user.username}`);
         }
 
         res.json({
             message: 'Profile picture removed successfully',
             user: {
-                id: updatedUser._id,
-                name: updatedUser.username,
-                username: updatedUser.username,
-                email: updatedUser.email,
+                id: user._id,
+                username: user.username,
+                email: user.email,
                 profilePicture: null,
-                about: updatedUser.about,
-                phone: updatedUser.phone,
-                isOnline: updatedUser.isOnline,
-                lastSeen: updatedUser.lastSeen
+                about: user.about,
+                phone: user.phone
             }
         });
     } catch (error) {
@@ -446,58 +442,106 @@ exports.getGroupProfile = async (req, res) => {
 };
 
 // Update user profile
-exports.updateUserProfile = async (req, res) => {
+exports.updateProfile = async (req, res) => {
     try {
         const userId = req.user.id;
-        const { name, username, about, phone, email } = req.body;
+        const { name, username, email, about, phone } = req.body;
 
-        const updateData = {};
-        if (name) updateData.username = name;
-        if (username) updateData.username = username;
-        if (about !== undefined) updateData.about = about;
-        if (phone !== undefined) updateData.phone = phone;
-        if (email) updateData.email = email;
+        const updates = {};
+        if (name !== undefined) updates.name = name;
+        if (username !== undefined) updates.username = username;
+        if (email !== undefined) updates.email = email;
+        if (about !== undefined) updates.about = about;
+        if (phone !== undefined) updates.phone = phone;
 
-        const updatedUser = await User.findByIdAndUpdate(
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ message: 'No updates provided' });
+        }
+
+        // Check if username/email already exists (if being updated)
+        if (username || email) {
+            const existingUser = await User.findOne({
+                _id: { $ne: userId },
+                $or: [
+                    ...(username ? [{ username }] : []),
+                    ...(email ? [{ email }] : [])
+                ]
+            });
+
+            if (existingUser) {
+                return res.status(400).json({
+                    message: existingUser.username === username
+                        ? 'Username already taken'
+                        : 'Email already registered'
+                });
+            }
+        }
+
+        const user = await User.findByIdAndUpdate(
             userId,
-            updateData,
-            { new: true, select: 'username email profilePicture about phone isOnline lastSeen' }
-        );
+            { $set: updates },
+            { new: true, runValidators: true }
+        ).select('-password');
 
-        if (!updatedUser) {
+        if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
 
+        // ✅ Emit socket event for profile updates
         const io = req.app.get('io');
         if (io) {
             io.emit('user_profile_updated', {
-                userId: updatedUser._id.toString(),
-                id: updatedUser._id.toString(),
-                name: updatedUser.username,
-                username: updatedUser.username,
-                email: updatedUser.email,
-                about: updatedUser.about,
-                phone: updatedUser.phone,
-                profilePicture: updatedUser.profilePicture || null
+                userId: user._id.toString(),
+                id: user._id.toString(),
+                name: user.username,
+                username: user.username,
+                email: user.email,
+                about: user.about,
+                phone: user.phone,
+                profilePicture: user.profilePicture || null
             });
+
+            console.log(`👤 Profile update broadcasted for user ${user.username}`);
         }
 
         res.json({
             message: 'Profile updated successfully',
             user: {
-                id: updatedUser._id,
-                name: updatedUser.username,
-                username: updatedUser.username,
-                email: updatedUser.email,
-                about: updatedUser.about,
-                phone: updatedUser.phone,
-                profilePicture: updatedUser.profilePicture || null,
-                isOnline: updatedUser.isOnline,
-                lastSeen: updatedUser.lastSeen
+                id: user._id,
+                username: user.username,
+                email: user.email,
+                profilePicture: user.profilePicture || null,
+                about: user.about,
+                phone: user.phone
             }
         });
     } catch (error) {
-        console.error('Error updating user profile:', error);
+        console.error('Error updating profile:', error);
+        res.status(500).json({ message: 'Server Error', error: error.message });
+    }
+};
+
+exports.getProfile = async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        const user = await User.findById(userId).select('-password');
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        res.json({
+            id: user._id,
+            username: user.username,
+            email: user.email,
+            profilePicture: user.profilePicture || null,
+            about: user.about,
+            phone: user.phone,
+            createdAt: user.createdAt
+        });
+    } catch (error) {
+        console.error('Error fetching profile:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
