@@ -198,38 +198,25 @@ exports.getMessages = async (req, res) => {
         const isPrivate = req.query.isPrivate;
         const currentUserId = req.user.id;
 
-        console.log('📥 Fetching messages:', { senderId, recipientId, isPrivate, currentUserId });
+        console.log('📩 Fetching private messages:', { senderId, recipientId, isPrivate });
 
-        let messages = [];
-
-        if (isPrivate === 'true') {
-            // ✅ Private Chat - senderId & recipientId required
-            if (senderId && recipientId) {
-                messages = await Message.find({
-                    $or: [
-                        { senderId, recipientId },
-                        { senderId: recipientId, recipientId: senderId }
-                    ],
-                    isDeleted: false,
-                    clearedBy: { $ne: currentUserId },
-                    groupId: { $exists: false } // 👈 make sure it's not group chat
-                })
-                    .populate('userId', 'name profilePicture')
-                    .sort({ createdAt: 1 })
-                    .lean();
-
-                console.log(`✅ Found ${messages.length} private messages`);
-            } else {
-                console.log('❌ Missing senderId or recipientId');
-                return res.status(400).json({ message: 'Invalid query parameters for private chat' });
-            }
-        } else {
-            // ✅ If it's not a private chat request, just skip this controller
-            console.log('ℹ️ This is not a private chat request. Use /group-messages route.');
-            return res.status(400).json({ message: 'Use /group-messages endpoint for group chats' });
+        if (isPrivate !== 'true' || !senderId || !recipientId) {
+            return res.status(400).json({ message: 'Invalid query parameters for private chat' });
         }
 
-        // ✅ Process messages safely
+        const messages = await Message.find({
+            $or: [
+                { senderId, recipientId },
+                { senderId: recipientId, recipientId: senderId }
+            ],
+            isDeleted: false,
+            groupId: { $exists: false },
+            clearedBy: { $ne: currentUserId }
+        })
+            .populate('userId', 'name profilePicture')
+            .sort({ createdAt: 1 })
+            .lean();
+
         const processedMessages = messages.map(msg => ({
             ...msg,
             id: msg._id.toString(),
@@ -242,48 +229,51 @@ exports.getMessages = async (req, res) => {
 
         return res.status(200).json(processedMessages);
     } catch (error) {
-        console.error('❌ Get messages error:', error);
-        return res.status(500).json({
-            message: 'Failed to fetch messages',
-            error: error.message
-        });
+        console.error('❌ Get private messages error:', error);
+        return res.status(500).json({ message: 'Failed to fetch private messages', error: error.message });
     }
 };
-
-
 
 exports.getGroupMessages = async (req, res) => {
     try {
         const { groupId } = req.params;
         const currentUserId = req.user.id;
 
+        if (!groupId) {
+            return res.status(400).json({ message: 'Group ID is required' });
+        }
+
+        console.log(`📩 Fetching group messages for groupId: ${groupId}`);
+
         const messages = await Message.find({
-            groupId,
+            groupId: groupId,
             isDeleted: false,
-            clearedBy: { $ne: currentUserId } // Exclude messages cleared by current user
+            clearedBy: { $ne: currentUserId } // ✅ exclude cleared messages for this user
         })
             .populate('userId', 'name profilePicture')
-            .sort({ createdAt: 1 });
+            .sort({ createdAt: 1 })
+            .lean();
 
-        const processedMessages = messages.map(msg => {
-            const messageObj = msg.toObject();
-            return {
-                ...messageObj,
-                id: msg._id,
-                isGroup: true,
-                messageStatus: msg.messageStatus || 'sent',
-                groupDeliveryStatus: msg.groupDeliveryStatus || [],
-                profilePicture: msg.userId?.profilePicture || null,
-                userProfileImage: msg.userId?.profilePicture || null
-            };
-        });
+        console.log(`✅ Found ${messages.length} group messages`);
+
+        const processedMessages = messages.map(msg => ({
+            ...msg,
+            id: msg._id.toString(),
+            _id: msg._id,
+            isGroup: true,
+            messageStatus: msg.messageStatus || 'sent',
+            groupDeliveryStatus: msg.groupDeliveryStatus || [],
+            profilePicture: msg.userId?.profilePicture || null,
+            userProfileImage: msg.userId?.profilePicture || null
+        }));
 
         return res.status(200).json(processedMessages);
     } catch (error) {
-        console.error('Get group messages error:', error);
-        return res.status(500).json({ message: 'Failed to fetch group messages' });
+        console.error('❌ Get group messages error:', error);
+        return res.status(500).json({ message: 'Failed to fetch group messages', error: error.message });
     }
 };
+
 
 // New delete message controller
 exports.deleteMessage = async (req, res) => {
