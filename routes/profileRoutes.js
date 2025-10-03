@@ -9,7 +9,7 @@ const {
     uploadGroupPicture,
     removeGroupPicture,
     getGroupProfile,
-    updateUserProfile
+    updateProfile
 } = require('../controllers/profileController');
 
 const router = express.Router();
@@ -19,7 +19,7 @@ router.get('/current', verifyToken, getUserProfile);
 router.get('/users', verifyToken, getAllUsers); // Changed from '/' to '/users'
 router.post('/picture', verifyToken, upload.single('profilePicture'), uploadProfilePicture);
 router.delete('/picture', verifyToken, removeProfilePicture);
-router.put('/update', verifyToken, updateUserProfile); // Changed from '/users/:id' to '/update'
+router.put('/update', verifyToken, updateProfile); // Changed from '/users/:id' to '/update'
 
 // Group routes (with explicit 'group' prefix to avoid conflicts)
 router.post('/group/:groupId/picture', verifyToken, (req, res, next) => {
