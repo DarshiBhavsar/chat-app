@@ -1155,44 +1155,20 @@ io.on('connection', socket => {
         }
     });
 
-    socket.on('clear-private-chat', async ({ userId, recipientId }) => {
+    socket.on('clear-private-chat', async ({ recipientId, userId }) => {
         try {
-            console.log(`🧹 Clearing private chat between ${userId} and ${recipientId}`);
+            console.log(`🧹 Clearing private chat for user ${userId} with ${recipientId}`);
 
-            // Update user's last seen
             await updateLastSeen(userId);
 
-            // Delete messages from database
-            const Message = require('./models/message');
-            const result = await Message.deleteMany({
-                $or: [
-                    { senderId: userId, recipientId: recipientId },
-                    { senderId: recipientId, recipientId: userId }
-                ]
-            });
-
-            // Notify both users about the chat being cleared
-            const recipientSocketId = userSocketMap.get(recipientId);
-
-            // Emit to the user who initiated the clear
+            // Just acknowledge - no need to emit to other user since it's user-specific
             socket.emit('chat-cleared', {
                 type: 'private',
                 chatId: recipientId,
-                deletedCount: result.deletedCount,
                 clearedBy: userId
             });
 
-            // Optionally notify the other participant
-            if (recipientSocketId) {
-                io.to(recipientSocketId).emit('chat-cleared', {
-                    type: 'private',
-                    chatId: userId,
-                    deletedCount: result.deletedCount,
-                    clearedBy: userId
-                });
-            }
-
-            console.log(`✅ Private chat cleared: ${result.deletedCount} messages deleted`);
+            console.log(`✅ Private chat cleared for user ${userId}`);
 
         } catch (error) {
             console.error('❌ Error clearing private chat:', error);
