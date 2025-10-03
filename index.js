@@ -995,26 +995,42 @@ io.on('connection', socket => {
             }
         }
     });
-
     socket.on('message-deleted', (data) => {
-        const { messageId, senderId, recipientId, isPrivate } = data;
+        const { messageId, senderId, recipientId, isPrivate, deleteType } = data;
 
-        if (isPrivate && recipientId) {
-            const recipientSocketId = userSocketMap.get(recipientId);
-            if (recipientSocketId) {
-                io.to(recipientSocketId).emit('message-deleted', { messageId, senderId });
+        if (deleteType === 'delete_for_everyone') {
+            // Only broadcast if delete for everyone
+            if (isPrivate && recipientId) {
+                const recipientSocketId = userSocketMap.get(recipientId);
+                if (recipientSocketId) {
+                    io.to(recipientSocketId).emit('message-deleted', {
+                        messageId,
+                        senderId,
+                        deleteType: 'delete_for_everyone'
+                    });
+                }
             }
+            console.log(`Message ${messageId} deleted for everyone by ${senderId}`);
+        } else {
+            console.log(`Message ${messageId} deleted for ${senderId} only`);
         }
-
-        console.log(`Message ${messageId} deleted by ${senderId}`);
     });
 
     socket.on('group-message-deleted', (data) => {
-        const { messageId, senderId, groupId } = data;
+        const { messageId, senderId, groupId, deleteType } = data;
 
-        socket.to(groupId).emit('group-message-deleted', { messageId, senderId, groupId });
-
-        console.log(`Group message ${messageId} deleted by ${senderId} in group ${groupId}`);
+        if (deleteType === 'delete_for_everyone') {
+            // Only broadcast if delete for everyone
+            socket.to(groupId).emit('group-message-deleted', {
+                messageId,
+                senderId,
+                groupId,
+                deleteType: 'delete_for_everyone'
+            });
+            console.log(`Group message ${messageId} deleted for everyone by ${senderId} in group ${groupId}`);
+        } else {
+            console.log(`Group message ${messageId} deleted for ${senderId} only in group ${groupId}`);
+        }
     });
 
     socket.on('block_user', async ({ userId, blockedBy }) => {
