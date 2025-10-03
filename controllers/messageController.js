@@ -264,7 +264,7 @@ exports.getGroupMessages = async (req, res) => {
 exports.deleteMessage = async (req, res) => {
     try {
         const { messageId } = req.params;
-        const { senderId } = req.body;
+        const { senderId, deleteType = 'delete_for_everyone' } = req.body;
 
         const message = await Message.findById(messageId);
 
@@ -272,21 +272,47 @@ exports.deleteMessage = async (req, res) => {
             return res.status(404).json({ message: 'Message not found' });
         }
 
-        if (message.senderId !== senderId) {
-            return res.status(403).json({ message: 'Not authorized to delete this message' });
+        if (deleteType === 'delete_for_me') {
+            // Delete for me - just add to clearedBy array
+            await Message.findByIdAndUpdate(messageId, {
+                $addToSet: { clearedBy: senderId }
+            });
+
+            return res.status(200).json({
+                message: 'Message deleted for you',
+                deletedMessageId: messageId,
+                deleteType: 'delete_for_me'
+            });
+        } else {
+            // Delete for everyone - check if sender
+            if (message.senderId !== senderId) {
+                return res.status(403).json({ message: 'Not authorized to delete this message for everyone' });
+            }
+
+            // Mark as deleted for everyone
+            const updatedMessage = await Message.findByIdAndUpdate(
+                messageId,
+                {
+                    message: 'This message was deleted',
+                    isDeleted: true,
+                    deletedAt: new Date()
+                },
+                { new: true }
+            );
+
+            return res.status(200).json({
+                message: 'Message deleted for everyone',
+                deletedMessageId: messageId,
+                deleteType: 'delete_for_everyone',
+                updatedMessage
+            });
         }
-
-        await Message.findByIdAndDelete(messageId);
-
-        return res.status(200).json({
-            message: 'Message deleted successfully',
-            deletedMessageId: messageId
-        });
     } catch (error) {
         console.error('Delete message error:', error);
         return res.status(500).json({ message: 'Failed to delete message' });
     }
 };
+
 
 // Alternative: Soft delete (marks as deleted but doesn't remove from DB)
 exports.softDeleteMessage = async (req, res) => {
@@ -304,7 +330,6 @@ exports.softDeleteMessage = async (req, res) => {
             return res.status(403).json({ message: 'Not authorized to delete this message' });
         }
 
-        // Mark as deleted instead of removing
         const updatedMessage = await Message.findByIdAndUpdate(
             messageId,
             {
