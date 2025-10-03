@@ -4,7 +4,7 @@ const messageSchema = new mongoose.Schema({
     userId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: false // Make this optional or provide it in controllers
+        required: false
     },
     user: { type: String },
     senderId: { type: String },
@@ -20,9 +20,16 @@ const messageSchema = new mongoose.Schema({
     isPrivate: { type: Boolean, default: true },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
+
+    // NEW: Track which users have cleared this message from their view
+    clearedBy: [{
+        type: String, // User IDs who have cleared this message
+        default: []
+    }],
+
     reactions: [{
         emoji: { type: String, required: true },
-        users: [{ type: String }], // Array of user IDs who reacted
+        users: [{ type: String }],
         count: { type: Number, default: 0 }
     }],
     messageStatus: {
@@ -40,7 +47,6 @@ const messageSchema = new mongoose.Schema({
         deliveredAt: { type: Date },
         readAt: { type: Date }
     }],
-
 
     // Embed replyTo directly instead of referencing
     replyTo: {

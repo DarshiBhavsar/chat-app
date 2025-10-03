@@ -241,15 +241,16 @@ exports.getMessages = async (req, res) => {
 exports.getGroupMessages = async (req, res) => {
     try {
         const { groupId } = req.params;
+        const currentUserId = req.user.id;
 
         const messages = await Message.find({
             groupId,
-            isDeleted: false
+            isDeleted: false,
+            clearedBy: { $ne: currentUserId } // Exclude messages cleared by current user
         })
-            .populate('userId', 'name profilePicture') // Populate user info
+            .populate('userId', 'name profilePicture')
             .sort({ createdAt: 1 });
 
-        // Process messages to include profile picture
         const processedMessages = messages.map(msg => {
             const messageObj = msg.toObject();
             return {
@@ -258,9 +259,8 @@ exports.getGroupMessages = async (req, res) => {
                 isGroup: true,
                 messageStatus: msg.messageStatus || 'sent',
                 groupDeliveryStatus: msg.groupDeliveryStatus || [],
-                // Add profile picture from populated user data
                 profilePicture: msg.userId?.profilePicture || null,
-                userProfileImage: msg.userId?.profilePicture || null // Alternative field name
+                userProfileImage: msg.userId?.profilePicture || null
             };
         });
 
@@ -373,13 +373,19 @@ exports.clearPrivateChat = async (req, res) => {
 exports.clearGroupChat = async (req, res) => {
     try {
         const { groupId } = req.params;
+        const currentUserId = req.user.id;
 
-        // Delete all messages in the group
-        const result = await Message.deleteMany({ groupId: groupId });
+        // Mark messages as cleared for this user only
+        const result = await Message.updateMany(
+            { groupId: groupId },
+            { $addToSet: { clearedBy: currentUserId } }
+        );
+
+        console.log(`✅ Group chat cleared for user ${currentUserId} in group ${groupId}: ${result.modifiedCount} messages`);
 
         return res.status(200).json({
             success: true,
-            deletedCount: result.deletedCount,
+            modifiedCount: result.modifiedCount,
             message: 'Group chat history cleared successfully'
         });
 
