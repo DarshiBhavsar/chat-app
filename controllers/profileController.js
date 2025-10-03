@@ -259,16 +259,27 @@ exports.uploadGroupPicture = async (req, res) => {
 
         console.log('Group updated. New profilePicture:', updatedGroup.profilePicture);
 
-        // Emit socket event
+        // Emit socket events with correct event names
         const io = req.app.get('io');
         if (io) {
-            console.log('Emitting socket event');
-            io.to(`group_${groupId}`).emit('group_picture_updated', {
+            console.log('Emitting socket events for group picture update');
+
+            // Emit group_profile_picture_updated event
+            io.emit('group_profile_picture_updated', {
                 groupId: updatedGroup._id.toString(),
                 groupName: updatedGroup.name,
-                newGroupPicture: imageUrl,
-                fullUrl: imageUrl
+                profilePicture: imageUrl
             });
+
+            // Also emit general group_updated event
+            io.emit('group_updated', {
+                groupId: updatedGroup._id.toString(),
+                name: updatedGroup.name,
+                description: updatedGroup.description,
+                profilePicture: imageUrl
+            });
+
+            console.log('Socket events emitted successfully');
         }
 
         const response = {
@@ -305,6 +316,7 @@ exports.uploadGroupPicture = async (req, res) => {
     }
 };
 
+
 // Remove group picture - WITH DETAILED LOGGING
 exports.removeGroupPicture = async (req, res) => {
     try {
@@ -319,7 +331,6 @@ exports.removeGroupPicture = async (req, res) => {
         const group = await Group.findById(groupId);
         console.log('Group found:', !!group);
         console.log('Current profilePicture in DB:', group?.profilePicture);
-        console.log('ProfilePicture type:', typeof group?.profilePicture);
 
         if (!group) {
             console.error('Group not found');
@@ -355,25 +366,28 @@ exports.removeGroupPicture = async (req, res) => {
 
         console.log('Database update completed');
         console.log('Updated profilePicture in DB:', updatedGroup.profilePicture);
-        console.log('Is undefined?', updatedGroup.profilePicture === undefined);
-        console.log('Is null?', updatedGroup.profilePicture === null);
-        console.log('Truthiness:', !!updatedGroup.profilePicture);
 
-        // Double-check by fetching again
-        const verifyGroup = await Group.findById(groupId).lean();
-        console.log('Verification fetch - profilePicture:', verifyGroup.profilePicture);
-        console.log('Has profilePicture field?', 'profilePicture' in verifyGroup);
-
-        // Emit socket event
+        // Emit socket events with correct event names
         const io = req.app.get('io');
         if (io) {
-            console.log('Emitting socket event to room: group_' + groupId);
-            io.to(`group_${groupId}`).emit('group_picture_updated', {
+            console.log('Emitting socket events for group picture removal');
+
+            // Emit group_profile_picture_updated event with null
+            io.emit('group_profile_picture_updated', {
                 groupId: updatedGroup._id.toString(),
                 groupName: updatedGroup.name,
-                newGroupPicture: null
+                profilePicture: null
             });
-            console.log('Socket event emitted');
+
+            // Also emit general group_updated event with null
+            io.emit('group_updated', {
+                groupId: updatedGroup._id.toString(),
+                name: updatedGroup.name,
+                description: updatedGroup.description,
+                profilePicture: null
+            });
+
+            console.log('Socket events emitted successfully');
         } else {
             console.warn('No io instance found');
         }
@@ -403,10 +417,10 @@ exports.removeGroupPicture = async (req, res) => {
         console.error('=== ERROR IN REMOVE GROUP PICTURE ===');
         console.error('Error message:', error.message);
         console.error('Error stack:', error.stack);
-        console.error('Error details:', error);
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
+
 
 // Get group with picture
 exports.getGroupProfile = async (req, res) => {
