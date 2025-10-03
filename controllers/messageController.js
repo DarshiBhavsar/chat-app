@@ -193,35 +193,37 @@ exports.sendGroupMessage = async (req, res) => {
 
 exports.getMessages = async (req, res) => {
     try {
-        const { senderId, recipientId, isPrivate } = req.query;
+        // ✅ Support both query and path parameters
+        const senderId = req.query.senderId || req.params.senderId;
+        const recipientId = req.query.recipientId || req.params.recipientId;
+        const isPrivate = req.query.isPrivate;
         const currentUserId = req.user.id;
 
         console.log('📥 Fetching messages:', { senderId, recipientId, isPrivate, currentUserId });
 
-        // ✅ Initialize as empty array to prevent undefined errors
         let messages = [];
 
-        if (isPrivate === 'true' && recipientId && senderId) {
+        // ✅ Check if all required params are present
+        if (isPrivate === 'true' && senderId && recipientId) {
             messages = await Message.find({
                 $or: [
                     { senderId, recipientId },
                     { senderId: recipientId, recipientId: senderId }
                 ],
                 isDeleted: false,
-                clearedBy: { $ne: currentUserId } // ✅ Exclude cleared messages
+                clearedBy: { $ne: currentUserId }
             })
                 .populate('userId', 'name profilePicture')
                 .sort({ createdAt: 1 })
-                .lean(); // ✅ Better performance
+                .lean();
 
             console.log(`✅ Found ${messages.length} private messages`);
         } else {
-            // ✅ Return error for invalid parameters instead of proceeding
             console.log('❌ Invalid query parameters:', { senderId, recipientId, isPrivate });
             return res.status(400).json({ message: 'Invalid query parameters' });
         }
 
-        // ✅ Now safe to map since messages is always an array
+        // ✅ Process messages safely
         const processedMessages = messages.map(msg => ({
             ...msg,
             id: msg._id.toString(),
@@ -235,13 +237,13 @@ exports.getMessages = async (req, res) => {
         return res.status(200).json(processedMessages);
     } catch (error) {
         console.error('❌ Get messages error:', error);
-        console.error('Error stack:', error.stack);
         return res.status(500).json({
             message: 'Failed to fetch messages',
             error: error.message
         });
     }
 };
+
 
 exports.getGroupMessages = async (req, res) => {
     try {
