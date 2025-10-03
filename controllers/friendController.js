@@ -257,7 +257,7 @@ exports.getFriendRequests = async (req, res) => {
             id: user._id,
             name: user.username,
             email: user.email,
-            profilePicture: user.profilePicture ? `/uploads/${path.basename(user.profilePicture)}` : null,
+            profilePicture: user.profilePicture || null,
             createdAt: user.createdAt
         }));
 
@@ -265,7 +265,7 @@ exports.getFriendRequests = async (req, res) => {
             id: user._id,
             name: user.username,
             email: user.email,
-            profilePicture: user.profilePicture ? `/uploads/${path.basename(user.profilePicture)}` : null,
+            profilePicture: user.profilePicture || null,
             createdAt: user.createdAt
         }));
 
