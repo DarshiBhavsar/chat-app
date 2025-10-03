@@ -72,7 +72,7 @@ exports.sendGroupMessage = async (req, res) => {
             audioDuration,
             video = [],
             replyTo,
-            groupMembers = []
+            groupMembers = [] // This might be empty/null from frontend
         } = req.body;
 
         console.log('📨 Group Message Request:', {
@@ -86,7 +86,7 @@ exports.sendGroupMessage = async (req, res) => {
             return res.status(400).json({ message: 'groupId is required for group messages' });
         }
 
-        // ✅ FIXED: Fetch actual group members with proper validation
+        // CRITICAL FIX: Fetch actual group members from database instead of relying on frontend
         const Group = require('../models/group');
         const group = await Group.findById(groupId).populate('members', '_id name');
 
@@ -101,24 +101,14 @@ exports.sendGroupMessage = async (req, res) => {
             members: group.members.map(m => ({ id: m._id, name: m.name }))
         });
 
-        // ✅ FIXED: Properly extract and validate member IDs
+        // Extract valid member IDs (excluding sender)
         const validGroupMembers = group.members
             .map(member => {
                 // Handle both populated and non-populated members
-                if (!member) return null;
-
-                const memberId = member._id ? member._id.toString() :
-                    (typeof member === 'string' ? member : member.toString());
-
+                const memberId = member._id ? member._id.toString() : member.toString();
                 return memberId;
             })
-            .filter(memberId => {
-                // ✅ CRITICAL: Filter out null, undefined, empty strings, and sender
-                return memberId &&
-                    memberId !== 'undefined' &&
-                    memberId !== 'null' &&
-                    memberId !== senderId;
-            });
+            .filter(memberId => memberId && memberId !== senderId); // Exclude sender
 
         console.log('✅ Valid group members (excluding sender):', validGroupMembers);
 
@@ -133,7 +123,7 @@ exports.sendGroupMessage = async (req, res) => {
             timeZone: 'Asia/Kolkata'
         }).toLowerCase();
 
-        // ✅ FIXED: Create group delivery status with validated member IDs only
+        // CRITICAL FIX: Create group delivery status with valid member IDs only
         const groupDeliveryStatus = validGroupMembers.map(memberId => ({
             userId: memberId,
             deliveredAt: null,
@@ -158,15 +148,15 @@ exports.sendGroupMessage = async (req, res) => {
             replyTo: replyTo || null,
             video,
             audioDuration,
-            isPrivate: true,
+            isPrivate: true, // Keep as true for group messages as per your schema
             messageStatus: 'sent',
-            groupDeliveryStatus // Now contains only valid user IDs
+            groupDeliveryStatus // Now contains valid user IDs
         });
 
         console.log('📝 Creating message with delivery status:', {
             messageId: newMessage._id,
             deliveryStatusCount: newMessage.groupDeliveryStatus.length,
-            validUserIds: newMessage.groupDeliveryStatus.every(s => s.userId && s.userId !== 'undefined')
+            validUserIds: newMessage.groupDeliveryStatus.every(s => s.userId)
         });
 
         const savedMessage = await newMessage.save();
@@ -181,7 +171,7 @@ exports.sendGroupMessage = async (req, res) => {
         const responseMessage = {
             ...savedMessage.toObject(),
             id: savedMessage._id,
-            groupMembers: validGroupMembers
+            groupMembers: validGroupMembers // Send back the actual member IDs
         };
 
         return res.status(201).json(responseMessage);
@@ -191,7 +181,7 @@ exports.sendGroupMessage = async (req, res) => {
         console.error('❌ Error details:', {
             name: error.name,
             message: error.message,
-            stack: error.stack?.split('\n')?.slice(0, 5)
+            stack: error.stack?.split('\n')?.slice(0, 3)
         });
 
         return res.status(500).json({
@@ -201,107 +191,91 @@ exports.sendGroupMessage = async (req, res) => {
     }
 };
 
-
 exports.getMessages = async (req, res) => {
     try {
         const { senderId, recipientId, isPrivate } = req.query;
-        const currentUserId = req.user.id;
 
-        console.log('📥 Fetching messages:', { senderId, recipientId, isPrivate, currentUserId });
+        let messages;
 
-        let messages = []; // ✅ FIXED: Initialize as empty array
-
-        if (isPrivate === 'true' && recipientId && senderId) {
+        if (isPrivate === 'true' && recipientId) {
             messages = await Message.find({
                 $or: [
                     { senderId, recipientId },
                     { senderId: recipientId, recipientId: senderId }
                 ],
-                isDeleted: false,
-                clearedBy: { $ne: currentUserId }
+                isDeleted: false
             })
-                .populate('userId', 'name profilePicture')
-                .sort({ createdAt: 1 })
-                .lean(); // ✅ FIXED: Use .lean() for better performance
-
-            console.log(`✅ Found ${messages.length} private messages`);
+                .populate('userId', 'name profilePicture') // Populate user info
+                .sort({ createdAt: 1 });
         } else {
-            console.log('❌ Invalid query parameters:', { senderId, recipientId, isPrivate });
-            return res.status(400).json({ message: 'Invalid query parameters' });
+            messages = await Message.find({
+                isPrivate: true,
+                isDeleted: false
+            })
+                .populate('userId', 'name profilePicture') // Populate user info
+                .sort({ createdAt: 1 });
         }
 
-        const processedMessages = messages.map(msg => ({
-            ...msg,
-            id: msg._id.toString(),
-            _id: msg._id,
-            messageStatus: msg.messageStatus || 'sent',
-            deliveredAt: msg.deliveredAt || null,
-            readAt: msg.readAt || null,
-            profilePicture: msg.userId?.profilePicture || null
-        }));
+        // Process messages to include profile picture
+        const processedMessages = messages.map(msg => {
+            const messageObj = msg.toObject();
+            return {
+                ...messageObj,
+                id: msg._id,
+                messageStatus: msg.messageStatus || 'sent',
+                deliveredAt: msg.deliveredAt || null,
+                readAt: msg.readAt || null,
+                // Add profile picture from populated user data
+                profilePicture: msg.userId?.profilePicture || null,
+                userProfileImage: msg.userId?.profilePicture || null // Alternative field name
+            };
+        });
 
         return res.status(200).json(processedMessages);
     } catch (error) {
-        console.error('❌ Get messages error:', error);
-        console.error('Error stack:', error.stack);
-        return res.status(500).json({
-            message: 'Failed to fetch messages',
-            error: error.message
-        });
+        console.error('Get messages error:', error);
+        return res.status(500).json({ message: 'Failed to fetch messages' });
     }
 };
-
 
 exports.getGroupMessages = async (req, res) => {
     try {
         const { groupId } = req.params;
         const currentUserId = req.user.id;
 
-        console.log('📥 Fetching group messages:', { groupId, currentUserId });
-
-        if (!groupId) {
-            return res.status(400).json({ message: 'Group ID is required' });
-        }
-
         const messages = await Message.find({
             groupId,
             isDeleted: false,
-            clearedBy: { $ne: currentUserId }
+            clearedBy: { $ne: currentUserId } // Exclude messages cleared by current user
         })
             .populate('userId', 'name profilePicture')
-            .sort({ createdAt: 1 })
-            .lean();
+            .sort({ createdAt: 1 });
 
-        console.log(`✅ Found ${messages.length} group messages`);
-
-        const processedMessages = messages.map(msg => ({
-            ...msg,
-            id: msg._id.toString(),
-            _id: msg._id,
-            isGroup: true,
-            messageStatus: msg.messageStatus || 'sent',
-            groupDeliveryStatus: msg.groupDeliveryStatus || [],
-            profilePicture: msg.userId?.profilePicture || null,
-            userProfileImage: msg.userId?.profilePicture || null
-        }));
+        const processedMessages = messages.map(msg => {
+            const messageObj = msg.toObject();
+            return {
+                ...messageObj,
+                id: msg._id,
+                isGroup: true,
+                messageStatus: msg.messageStatus || 'sent',
+                groupDeliveryStatus: msg.groupDeliveryStatus || [],
+                profilePicture: msg.userId?.profilePicture || null,
+                userProfileImage: msg.userId?.profilePicture || null
+            };
+        });
 
         return res.status(200).json(processedMessages);
     } catch (error) {
-        console.error('❌ Get group messages error:', error);
-        console.error('Error stack:', error.stack);
-        return res.status(500).json({
-            message: 'Failed to fetch group messages',
-            error: error.message
-        });
+        console.error('Get group messages error:', error);
+        return res.status(500).json({ message: 'Failed to fetch group messages' });
     }
 };
-
 
 // New delete message controller
 exports.deleteMessage = async (req, res) => {
     try {
         const { messageId } = req.params;
-        const { senderId, deleteType = 'delete_for_everyone' } = req.body;
+        const { senderId } = req.body;
 
         const message = await Message.findById(messageId);
 
@@ -309,47 +283,21 @@ exports.deleteMessage = async (req, res) => {
             return res.status(404).json({ message: 'Message not found' });
         }
 
-        if (deleteType === 'delete_for_me') {
-            // Delete for me - just add to clearedBy array
-            await Message.findByIdAndUpdate(messageId, {
-                $addToSet: { clearedBy: senderId }
-            });
-
-            return res.status(200).json({
-                message: 'Message deleted for you',
-                deletedMessageId: messageId,
-                deleteType: 'delete_for_me'
-            });
-        } else {
-            // Delete for everyone - check if sender
-            if (message.senderId !== senderId) {
-                return res.status(403).json({ message: 'Not authorized to delete this message for everyone' });
-            }
-
-            // Mark as deleted for everyone
-            const updatedMessage = await Message.findByIdAndUpdate(
-                messageId,
-                {
-                    message: 'This message was deleted',
-                    isDeleted: true,
-                    deletedAt: new Date()
-                },
-                { new: true }
-            );
-
-            return res.status(200).json({
-                message: 'Message deleted for everyone',
-                deletedMessageId: messageId,
-                deleteType: 'delete_for_everyone',
-                updatedMessage
-            });
+        if (message.senderId !== senderId) {
+            return res.status(403).json({ message: 'Not authorized to delete this message' });
         }
+
+        await Message.findByIdAndDelete(messageId);
+
+        return res.status(200).json({
+            message: 'Message deleted successfully',
+            deletedMessageId: messageId
+        });
     } catch (error) {
         console.error('Delete message error:', error);
         return res.status(500).json({ message: 'Failed to delete message' });
     }
 };
-
 
 // Alternative: Soft delete (marks as deleted but doesn't remove from DB)
 exports.softDeleteMessage = async (req, res) => {
@@ -367,6 +315,7 @@ exports.softDeleteMessage = async (req, res) => {
             return res.status(403).json({ message: 'Not authorized to delete this message' });
         }
 
+        // Mark as deleted instead of removing
         const updatedMessage = await Message.findByIdAndUpdate(
             messageId,
             {
