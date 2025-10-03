@@ -340,26 +340,25 @@ exports.softDeleteMessage = async (req, res) => {
 exports.clearPrivateChat = async (req, res) => {
     try {
         const { recipientId } = req.params;
+        const currentUserId = req.user.id;
 
-        // Get the current user's ID from the authenticated request
-        // You should extract this from JWT token in your auth middleware
-        const currentUserId = req.user.id; // Assuming you have auth middleware that sets req.user
+        // Mark messages as cleared for this user only
+        const result = await Message.updateMany(
+            {
+                $or: [
+                    { senderId: currentUserId, recipientId: recipientId },
+                    { senderId: recipientId, recipientId: currentUserId }
+                ],
+                groupId: { $exists: false }
+            },
+            { $addToSet: { clearedBy: currentUserId } }
+        );
 
-        // Delete all messages between these two users (both directions)
-        const result = await Message.deleteMany({
-            $or: [
-                // Messages from current user to selected user
-                { senderId: currentUserId, recipientId: recipientId },
-                // Messages from selected user to current user
-                { senderId: recipientId, recipientId: currentUserId }
-            ],
-            // Ensure we're only deleting private messages (not group messages)
-            groupId: { $exists: false }
-        });
+        console.log(`✅ Private chat cleared for user ${currentUserId}: ${result.modifiedCount} messages`);
 
         return res.status(200).json({
             success: true,
-            deletedCount: result.deletedCount,
+            modifiedCount: result.modifiedCount,
             message: 'Private chat history cleared successfully'
         });
 
