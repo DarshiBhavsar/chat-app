@@ -1154,21 +1154,35 @@ io.on('connection', socket => {
             });
         }
     });
-
-    socket.on('clear-private-chat', async ({ recipientId, userId }) => {
+    socket.on('clear-private-chat', async ({ userId, recipientId }) => {
         try {
             console.log(`🧹 Clearing private chat for user ${userId} with ${recipientId}`);
 
             await updateLastSeen(userId);
 
-            // Just acknowledge - no need to emit to other user since it's user-specific
+            const Message = require('./models/message');
+
+            // ✅ FIXED: Use updateMany with $addToSet instead of deleteMany
+            const result = await Message.updateMany(
+                {
+                    $or: [
+                        { senderId: userId, recipientId: recipientId },
+                        { senderId: recipientId, recipientId: userId }
+                    ],
+                    groupId: { $exists: false }
+                },
+                { $addToSet: { clearedBy: userId } }
+            );
+
+            // Only notify the user who cleared (not the recipient)
             socket.emit('chat-cleared', {
                 type: 'private',
                 chatId: recipientId,
+                modifiedCount: result.modifiedCount,
                 clearedBy: userId
             });
 
-            console.log(`✅ Private chat cleared for user ${userId}`);
+            console.log(`✅ Private chat cleared for user ${userId}: ${result.modifiedCount} messages marked as cleared`);
 
         } catch (error) {
             console.error('❌ Error clearing private chat:', error);
