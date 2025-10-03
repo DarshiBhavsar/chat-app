@@ -193,7 +193,6 @@ exports.sendGroupMessage = async (req, res) => {
 
 exports.getMessages = async (req, res) => {
     try {
-        // ✅ Support both query and path parameters
         const senderId = req.query.senderId || req.params.senderId;
         const recipientId = req.query.recipientId || req.params.recipientId;
         const isPrivate = req.query.isPrivate;
@@ -203,24 +202,31 @@ exports.getMessages = async (req, res) => {
 
         let messages = [];
 
-        // ✅ Check if all required params are present
-        if (isPrivate === 'true' && senderId && recipientId) {
-            messages = await Message.find({
-                $or: [
-                    { senderId, recipientId },
-                    { senderId: recipientId, recipientId: senderId }
-                ],
-                isDeleted: false,
-                clearedBy: { $ne: currentUserId }
-            })
-                .populate('userId', 'name profilePicture')
-                .sort({ createdAt: 1 })
-                .lean();
+        if (isPrivate === 'true') {
+            // ✅ Private Chat - senderId & recipientId required
+            if (senderId && recipientId) {
+                messages = await Message.find({
+                    $or: [
+                        { senderId, recipientId },
+                        { senderId: recipientId, recipientId: senderId }
+                    ],
+                    isDeleted: false,
+                    clearedBy: { $ne: currentUserId },
+                    groupId: { $exists: false } // 👈 make sure it's not group chat
+                })
+                    .populate('userId', 'name profilePicture')
+                    .sort({ createdAt: 1 })
+                    .lean();
 
-            console.log(`✅ Found ${messages.length} private messages`);
+                console.log(`✅ Found ${messages.length} private messages`);
+            } else {
+                console.log('❌ Missing senderId or recipientId');
+                return res.status(400).json({ message: 'Invalid query parameters for private chat' });
+            }
         } else {
-            console.log('❌ Invalid query parameters:', { senderId, recipientId, isPrivate });
-            return res.status(400).json({ message: 'Invalid query parameters' });
+            // ✅ If it's not a private chat request, just skip this controller
+            console.log('ℹ️ This is not a private chat request. Use /group-messages route.');
+            return res.status(400).json({ message: 'Use /group-messages endpoint for group chats' });
         }
 
         // ✅ Process messages safely
@@ -243,6 +249,7 @@ exports.getMessages = async (req, res) => {
         });
     }
 };
+
 
 
 exports.getGroupMessages = async (req, res) => {
