@@ -194,6 +194,7 @@ exports.sendGroupMessage = async (req, res) => {
 exports.getMessages = async (req, res) => {
     try {
         const { senderId, recipientId, isPrivate } = req.query;
+        const currentUserId = req.user.id;
 
         let messages;
 
@@ -203,33 +204,21 @@ exports.getMessages = async (req, res) => {
                     { senderId, recipientId },
                     { senderId: recipientId, recipientId: senderId }
                 ],
-                isDeleted: false
+                isDeleted: false,
+                clearedBy: { $ne: currentUserId } // ✅ Filter out cleared messages
             })
-                .populate('userId', 'name profilePicture') // Populate user info
-                .sort({ createdAt: 1 });
-        } else {
-            messages = await Message.find({
-                isPrivate: true,
-                isDeleted: false
-            })
-                .populate('userId', 'name profilePicture') // Populate user info
+                .populate('userId', 'name profilePicture')
                 .sort({ createdAt: 1 });
         }
 
-        // Process messages to include profile picture
-        const processedMessages = messages.map(msg => {
-            const messageObj = msg.toObject();
-            return {
-                ...messageObj,
-                id: msg._id,
-                messageStatus: msg.messageStatus || 'sent',
-                deliveredAt: msg.deliveredAt || null,
-                readAt: msg.readAt || null,
-                // Add profile picture from populated user data
-                profilePicture: msg.userId?.profilePicture || null,
-                userProfileImage: msg.userId?.profilePicture || null // Alternative field name
-            };
-        });
+        const processedMessages = messages.map(msg => ({
+            ...msg.toObject(),
+            id: msg._id,
+            messageStatus: msg.messageStatus || 'sent',
+            deliveredAt: msg.deliveredAt || null,
+            readAt: msg.readAt || null,
+            profilePicture: msg.userId?.profilePicture || null
+        }));
 
         return res.status(200).json(processedMessages);
     } catch (error) {
@@ -342,7 +331,7 @@ exports.clearPrivateChat = async (req, res) => {
         const { recipientId } = req.params;
         const currentUserId = req.user.id;
 
-        // Mark messages as cleared for this user only
+        // ✅ FIXED: Use updateMany with $addToSet instead of deleteMany
         const result = await Message.updateMany(
             {
                 $or: [
