@@ -72,7 +72,7 @@ exports.sendGroupMessage = async (req, res) => {
             audioDuration,
             video = [],
             replyTo,
-            groupMembers = [] // This might be empty/null from frontend
+            groupMembers = []
         } = req.body;
 
         console.log('📨 Group Message Request:', {
@@ -86,7 +86,7 @@ exports.sendGroupMessage = async (req, res) => {
             return res.status(400).json({ message: 'groupId is required for group messages' });
         }
 
-        // CRITICAL FIX: Fetch actual group members from database instead of relying on frontend
+        // ✅ FIXED: Fetch actual group members with proper validation
         const Group = require('../models/group');
         const group = await Group.findById(groupId).populate('members', '_id name');
 
@@ -101,14 +101,24 @@ exports.sendGroupMessage = async (req, res) => {
             members: group.members.map(m => ({ id: m._id, name: m.name }))
         });
 
-        // Extract valid member IDs (excluding sender)
+        // ✅ FIXED: Properly extract and validate member IDs
         const validGroupMembers = group.members
             .map(member => {
                 // Handle both populated and non-populated members
-                const memberId = member._id ? member._id.toString() : member.toString();
+                if (!member) return null;
+
+                const memberId = member._id ? member._id.toString() :
+                    (typeof member === 'string' ? member : member.toString());
+
                 return memberId;
             })
-            .filter(memberId => memberId && memberId !== senderId); // Exclude sender
+            .filter(memberId => {
+                // ✅ CRITICAL: Filter out null, undefined, empty strings, and sender
+                return memberId &&
+                    memberId !== 'undefined' &&
+                    memberId !== 'null' &&
+                    memberId !== senderId;
+            });
 
         console.log('✅ Valid group members (excluding sender):', validGroupMembers);
 
@@ -123,7 +133,7 @@ exports.sendGroupMessage = async (req, res) => {
             timeZone: 'Asia/Kolkata'
         }).toLowerCase();
 
-        // CRITICAL FIX: Create group delivery status with valid member IDs only
+        // ✅ FIXED: Create group delivery status with validated member IDs only
         const groupDeliveryStatus = validGroupMembers.map(memberId => ({
             userId: memberId,
             deliveredAt: null,
@@ -148,15 +158,15 @@ exports.sendGroupMessage = async (req, res) => {
             replyTo: replyTo || null,
             video,
             audioDuration,
-            isPrivate: true, // Keep as true for group messages as per your schema
+            isPrivate: true,
             messageStatus: 'sent',
-            groupDeliveryStatus // Now contains valid user IDs
+            groupDeliveryStatus // Now contains only valid user IDs
         });
 
         console.log('📝 Creating message with delivery status:', {
             messageId: newMessage._id,
             deliveryStatusCount: newMessage.groupDeliveryStatus.length,
-            validUserIds: newMessage.groupDeliveryStatus.every(s => s.userId)
+            validUserIds: newMessage.groupDeliveryStatus.every(s => s.userId && s.userId !== 'undefined')
         });
 
         const savedMessage = await newMessage.save();
@@ -171,7 +181,7 @@ exports.sendGroupMessage = async (req, res) => {
         const responseMessage = {
             ...savedMessage.toObject(),
             id: savedMessage._id,
-            groupMembers: validGroupMembers // Send back the actual member IDs
+            groupMembers: validGroupMembers
         };
 
         return res.status(201).json(responseMessage);
@@ -181,7 +191,7 @@ exports.sendGroupMessage = async (req, res) => {
         console.error('❌ Error details:', {
             name: error.name,
             message: error.message,
-            stack: error.stack?.split('\n')?.slice(0, 3)
+            stack: error.stack?.split('\n')?.slice(0, 5)
         });
 
         return res.status(500).json({
@@ -191,29 +201,39 @@ exports.sendGroupMessage = async (req, res) => {
     }
 };
 
+
 exports.getMessages = async (req, res) => {
     try {
         const { senderId, recipientId, isPrivate } = req.query;
         const currentUserId = req.user.id;
 
-        let messages;
+        console.log('📥 Fetching messages:', { senderId, recipientId, isPrivate, currentUserId });
 
-        if (isPrivate === 'true' && recipientId) {
+        let messages = []; // ✅ FIXED: Initialize as empty array
+
+        if (isPrivate === 'true' && recipientId && senderId) {
             messages = await Message.find({
                 $or: [
                     { senderId, recipientId },
                     { senderId: recipientId, recipientId: senderId }
                 ],
                 isDeleted: false,
-                clearedBy: { $ne: currentUserId } // ✅ Filter out cleared messages
+                clearedBy: { $ne: currentUserId }
             })
                 .populate('userId', 'name profilePicture')
-                .sort({ createdAt: 1 });
+                .sort({ createdAt: 1 })
+                .lean(); // ✅ FIXED: Use .lean() for better performance
+
+            console.log(`✅ Found ${messages.length} private messages`);
+        } else {
+            console.log('❌ Invalid query parameters:', { senderId, recipientId, isPrivate });
+            return res.status(400).json({ message: 'Invalid query parameters' });
         }
 
         const processedMessages = messages.map(msg => ({
-            ...msg.toObject(),
-            id: msg._id,
+            ...msg,
+            id: msg._id.toString(),
+            _id: msg._id,
             messageStatus: msg.messageStatus || 'sent',
             deliveredAt: msg.deliveredAt || null,
             readAt: msg.readAt || null,
@@ -222,43 +242,60 @@ exports.getMessages = async (req, res) => {
 
         return res.status(200).json(processedMessages);
     } catch (error) {
-        console.error('Get messages error:', error);
-        return res.status(500).json({ message: 'Failed to fetch messages' });
+        console.error('❌ Get messages error:', error);
+        console.error('Error stack:', error.stack);
+        return res.status(500).json({
+            message: 'Failed to fetch messages',
+            error: error.message
+        });
     }
 };
+
 
 exports.getGroupMessages = async (req, res) => {
     try {
         const { groupId } = req.params;
         const currentUserId = req.user.id;
 
+        console.log('📥 Fetching group messages:', { groupId, currentUserId });
+
+        if (!groupId) {
+            return res.status(400).json({ message: 'Group ID is required' });
+        }
+
         const messages = await Message.find({
             groupId,
             isDeleted: false,
-            clearedBy: { $ne: currentUserId } // Exclude messages cleared by current user
+            clearedBy: { $ne: currentUserId }
         })
             .populate('userId', 'name profilePicture')
-            .sort({ createdAt: 1 });
+            .sort({ createdAt: 1 })
+            .lean();
 
-        const processedMessages = messages.map(msg => {
-            const messageObj = msg.toObject();
-            return {
-                ...messageObj,
-                id: msg._id,
-                isGroup: true,
-                messageStatus: msg.messageStatus || 'sent',
-                groupDeliveryStatus: msg.groupDeliveryStatus || [],
-                profilePicture: msg.userId?.profilePicture || null,
-                userProfileImage: msg.userId?.profilePicture || null
-            };
-        });
+        console.log(`✅ Found ${messages.length} group messages`);
+
+        const processedMessages = messages.map(msg => ({
+            ...msg,
+            id: msg._id.toString(),
+            _id: msg._id,
+            isGroup: true,
+            messageStatus: msg.messageStatus || 'sent',
+            groupDeliveryStatus: msg.groupDeliveryStatus || [],
+            profilePicture: msg.userId?.profilePicture || null,
+            userProfileImage: msg.userId?.profilePicture || null
+        }));
 
         return res.status(200).json(processedMessages);
     } catch (error) {
-        console.error('Get group messages error:', error);
-        return res.status(500).json({ message: 'Failed to fetch group messages' });
+        console.error('❌ Get group messages error:', error);
+        console.error('Error stack:', error.stack);
+        return res.status(500).json({
+            message: 'Failed to fetch group messages',
+            error: error.message
+        });
     }
 };
+
 
 // New delete message controller
 exports.deleteMessage = async (req, res) => {
