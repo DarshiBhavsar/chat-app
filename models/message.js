@@ -21,9 +21,9 @@ const messageSchema = new mongoose.Schema({
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
 
-    // NEW: Track which users have cleared this message from their view
+
     clearedBy: [{
-        type: String, // User IDs who have cleared this message
+        type: String,
         default: []
     }],
 
@@ -38,7 +38,6 @@ const messageSchema = new mongoose.Schema({
         default: 'sent'
     },
 
-    // For private messages
     deliveredAt: { type: Date },
     readAt: { type: Date },
 
@@ -48,7 +47,6 @@ const messageSchema = new mongoose.Schema({
         readAt: { type: Date }
     }],
 
-    // Embed replyTo directly instead of referencing
     replyTo: {
         id: { type: String },
         message: { type: String },
