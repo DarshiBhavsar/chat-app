@@ -399,7 +399,7 @@ exports.markAsViewed = async (req, res) => {
         }
 
         const currentUser = await User.findById(userId)
-            .select('friends blockedUsers blockedBy')
+            .select('friends blockedUsers blockedBy username profilePicture') // 🔥 ADD username and profilePicture
             .lean();
 
         if (!currentUser) {
@@ -488,12 +488,13 @@ exports.markAsViewed = async (req, res) => {
                 .populate('userId', 'username profilePicture')
                 .populate({
                     path: 'viewers.userId',
-                    select: 'username profilePicture'
+                    select: 'username profilePicture' // 🔥 CRITICAL: Populate with full user data
                 });
 
             wasNewView = true;
             console.log(`✅ Status ${statusId} viewed by ${userId} - Total views: ${updatedStatus.viewers.length}`);
 
+            // 🔥 FIXED: Format viewers with proper profile pictures
             const updatedStatusData = {
                 id: updatedStatus._id.toString(),
                 userId: updatedStatus.userId._id.toString(),
@@ -506,7 +507,7 @@ exports.markAsViewed = async (req, res) => {
                 viewers: (updatedStatus.viewers || []).map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
-                    profilePicture: viewer.userId.profilePicture || null,
+                    profilePicture: viewer.userId.profilePicture || null, // 🔥 Profile picture included
                     viewedAt: viewer.viewedAt
                 })),
                 isActive: updatedStatus.isActive
@@ -544,7 +545,7 @@ exports.markAsViewed = async (req, res) => {
                 viewers: (status.viewers || []).map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
-                    profilePicture: viewer.userId.profilePicture || null,
+                    profilePicture: viewer.userId.profilePicture || null, // 🔥 Profile picture included
                     viewedAt: viewer.viewedAt
                 })),
                 isActive: status.isActive
