@@ -1617,8 +1617,6 @@ io.on('connection', socket => {
         }
     });
 
-
-
     // Listen for message read events from clients
     socket.on('message-read', async (data) => {
         const { messageId, userId, readAt, messageStatus } = data;
