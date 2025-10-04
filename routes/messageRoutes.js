@@ -42,24 +42,22 @@ router.post('/upload-image', authenticateToken, upload.array('image'), (req, res
     res.status(200).json({ imageUrls });
 });
 
-// ✅ FIXED: Document upload - use file.path
 router.post('/upload-document', authenticateToken, uploadDocument.array('document', 5), (req, res) => {
     if (!req.files || req.files.length === 0) {
         return res.status(400).json({ message: 'No document uploaded' });
     }
 
-    const documentUrls = req.files.map(file => file.path); // Changed from /documents/${file.filename}
+    const documentUrls = req.files.map(file => file.path);
     console.log('✅ Documents uploaded to Cloudinary:', documentUrls);
     res.status(200).json({ documentUrls });
 });
 
-// ✅ FIXED: Audio upload - use file.path
 router.post('/upload-audio', authenticateToken, audioUpload.single('audio'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ message: 'No audio file uploaded' });
     }
 
-    const audioUrl = req.file.path; // Changed from constructed URL
+    const audioUrl = req.file.path;
     console.log('✅ Audio uploaded to Cloudinary:', audioUrl);
 
     res.status(200).json({
@@ -68,7 +66,6 @@ router.post('/upload-audio', authenticateToken, audioUpload.single('audio'), (re
     });
 });
 
-// ✅ FIXED: Video upload - use file.path
 router.post('/upload-video', authenticateToken, uploadVideo.single('video'), (req, res) => {
     try {
         if (!req.file) {
@@ -93,9 +90,10 @@ router.post('/upload-video', authenticateToken, uploadVideo.single('video'), (re
     }
 });
 
-// Fetch messages routes - PROTECTED  
-router.get('/fetch/:senderId/:recipientId', authenticateToken, getMessages);
+// ✅ CRITICAL FIX: Fetch messages routes - GROUP ROUTE MUST COME FIRST
+// This is because /fetch/group/:groupId must match before /fetch/:senderId/:recipientId
 router.get('/fetch/group/:groupId', authenticateToken, getGroupMessages);
+router.get('/fetch/:senderId/:recipientId', authenticateToken, getMessages);
 
 // Delete message routes - PROTECTED
 router.delete('/delete/:messageId', authenticateToken, deleteMessage);
