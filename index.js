@@ -60,8 +60,6 @@ const updateLastSeen = async (userId) => {
     }
 };
 
-
-
 // Helper function to set user offline
 const setUserOffline = async (userId) => {
     const timestamp = new Date();

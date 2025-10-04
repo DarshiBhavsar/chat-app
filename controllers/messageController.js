@@ -204,6 +204,7 @@ exports.getMessages = async (req, res) => {
             return res.status(400).json({ message: 'Invalid query parameters for private chat' });
         }
 
+        // ✅ FIXED: Use $nin to check if userId is NOT in the clearedBy array
         const messages = await Message.find({
             $or: [
                 { senderId, recipientId },
@@ -211,7 +212,7 @@ exports.getMessages = async (req, res) => {
             ],
             isDeleted: false,
             groupId: { $exists: false },
-            clearedBy: { $ne: currentUserId }
+            clearedBy: { $nin: [currentUserId] } // Changed from $ne to $nin
         })
             .populate('userId', 'name profilePicture')
             .sort({ createdAt: 1 })
@@ -236,24 +237,23 @@ exports.getMessages = async (req, res) => {
 
 exports.getGroupMessages = async (req, res) => {
     try {
-        const groupId = req.params.groupId; // ✅ use params, not query
+        const groupId = req.params.groupId;
         const currentUserId = req.user.id;
 
         console.log("📥 Group Message API Hit");
         console.log("✅ groupId:", groupId);
         console.log("✅ currentUserId:", currentUserId);
 
-        // ❌ If groupId is missing
         if (!groupId) {
             console.log("❌ Missing groupId in request params");
             return res.status(400).json({ message: "Group ID is required" });
         }
 
-        // ✅ Fetch group messages
+        // ✅ FIXED: Use $nin to check if userId is NOT in the clearedBy array
         const messages = await Message.find({
             groupId: groupId,
             isDeleted: false,
-            clearedBy: { $ne: currentUserId }
+            clearedBy: { $nin: [currentUserId] } // Changed from $ne to $nin
         })
             .populate("userId", "name profilePicture")
             .sort({ createdAt: 1 })
@@ -261,7 +261,6 @@ exports.getGroupMessages = async (req, res) => {
 
         console.log(`✅ Found ${messages.length} messages for group ${groupId}`);
 
-        // ✅ Format response
         const processedMessages = messages.map(msg => ({
             ...msg,
             id: msg._id.toString(),
