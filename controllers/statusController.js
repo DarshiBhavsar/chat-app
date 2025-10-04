@@ -425,7 +425,7 @@ exports.markAsViewed = async (req, res) => {
                 id: status._id.toString(),
                 userId: statusOwnerId,
                 userName: status.userId.username,
-                profileImage: status.userId.profilePicture ? `/uploads/${path.basename(status.userId.profilePicture)}` : null,
+                profileImage: status.userId.profilePicture || null,
                 content: status.content,
                 createdAt: status.createdAt,
                 expiresAt: status.expiresAt,
@@ -433,7 +433,7 @@ exports.markAsViewed = async (req, res) => {
                 viewers: (status.viewers || []).map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
-                    profilePicture: viewer.userId.profilePicture ? `/uploads/${path.basename(viewer.userId.profilePicture)}` : null,
+                    profilePicture: viewer.userId.profilePicture || null,
                     viewedAt: viewer.viewedAt
                 })),
                 isActive: status.isActive
@@ -498,7 +498,7 @@ exports.markAsViewed = async (req, res) => {
                 id: updatedStatus._id.toString(),
                 userId: updatedStatus.userId._id.toString(),
                 userName: updatedStatus.userId.username,
-                profileImage: updatedStatus.userId.profilePicture ? `/uploads/${path.basename(updatedStatus.userId.profilePicture)}` : null,
+                profileImage: updatedStatus.userId.profilePicture || null,
                 content: updatedStatus.content,
                 createdAt: updatedStatus.createdAt,
                 expiresAt: updatedStatus.expiresAt,
@@ -506,7 +506,7 @@ exports.markAsViewed = async (req, res) => {
                 viewers: (updatedStatus.viewers || []).map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
-                    profilePicture: viewer.userId.profilePicture ? `/uploads/${path.basename(viewer.userId.profilePicture)}` : null,
+                    profilePicture: viewer.userId.profilePicture || null,
                     viewedAt: viewer.viewedAt
                 })),
                 isActive: updatedStatus.isActive
@@ -536,7 +536,7 @@ exports.markAsViewed = async (req, res) => {
                 id: status._id.toString(),
                 userId: status.userId._id.toString(),
                 userName: status.userId.username,
-                profileImage: status.userId.profilePicture ? `/uploads/${path.basename(status.userId.profilePicture)}` : null,
+                profileImage: status.userId.profilePicture || null,
                 content: status.content,
                 createdAt: status.createdAt,
                 expiresAt: status.expiresAt,
@@ -544,7 +544,7 @@ exports.markAsViewed = async (req, res) => {
                 viewers: (status.viewers || []).map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
-                    profilePicture: viewer.userId.profilePicture ? `/uploads/${path.basename(viewer.userId.profilePicture)}` : null,
+                    profilePicture: viewer.userId.profilePicture || null,
                     viewedAt: viewer.viewedAt
                 })),
                 isActive: status.isActive
@@ -638,7 +638,7 @@ exports.markMultipleAsViewed = async (req, res) => {
                     id: status._id.toString(),
                     userId: status.userId._id.toString(),
                     userName: status.userId.username,
-                    profilePicture: status.userId.profilePicture ? `/uploads/${path.basename(status.userId.profilePicture)}` : null,
+                    profilePicture: status.userId.profilePicture || null,
                     content: status.content,
                     createdAt: status.createdAt,
                     expiresAt: status.expiresAt,
@@ -690,7 +690,7 @@ exports.getAllUsers = async (req, res) => {
 
         const formattedUsers = users.map(user => ({
             ...user,
-            profilePicture: user.profilePicture ? `/uploads/${path.basename(user.profilePicture)}` : null
+            profilePicture: user.profilePicture || null,
         }));
 
         res.json(formattedUsers);
@@ -733,7 +733,7 @@ exports.getMyStatuses = async (req, res) => {
                 id: filteredStatus._id.toString(),
                 userId: filteredStatus.userId._id.toString(),
                 userName: filteredStatus.userId.username,
-                profileImage: filteredStatus.userId.profilePicture ? `/uploads/${path.basename(filteredStatus.userId.profilePicture)}` : null,
+                profileImage: filteredStatus.userId.profilePicture || null,
                 content: filteredStatus.content,
                 createdAt: filteredStatus.createdAt,
                 expiresAt: filteredStatus.expiresAt,
@@ -741,7 +741,7 @@ exports.getMyStatuses = async (req, res) => {
                 viewers: filteredStatus.viewers ? filteredStatus.viewers.map(viewer => ({
                     userId: viewer.userId._id.toString(),
                     userName: viewer.userId.username,
-                    profilePicture: viewer.userId.profilePicture ? `/uploads/${path.basename(viewer.userId.profilePicture)}` : null,
+                    profilePicture: viewer.userId.profilePicture || null,
                     viewedAt: viewer.viewedAt
                 })) : [],
                 isActive: filteredStatus.isActive
@@ -814,7 +814,7 @@ exports.getStatusById = async (req, res) => {
             id: status._id.toString(),
             userId: statusOwnerId,
             userName: status.userId.username,
-            profilePicture: status.userId.profilePicture ? `/uploads/${path.basename(status.userId.profilePicture)}` : null,
+            profilePicture: status.userId.profilePicture || null,
             content: status.content,
             createdAt: status.createdAt,
             expiresAt: status.expiresAt,
