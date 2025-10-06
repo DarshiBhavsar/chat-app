@@ -286,7 +286,7 @@ exports.getGroupMessages = async (req, res) => {
 exports.deleteMessage = async (req, res) => {
     try {
         const { messageId } = req.params;
-        const { deleteType } = req.body; // 'delete_for_me' or 'delete_for_everyone'
+        const { deleteType } = req.body;
         const currentUserId = req.user.id;
 
         console.log(`🗑️ Delete request: messageId=${messageId}, deleteType=${deleteType}, userId=${currentUserId}`);
@@ -326,6 +326,7 @@ exports.deleteMessage = async (req, res) => {
                 {
                     isDeleted: true,
                     deletedAt: new Date(),
+                    deletedBy: currentUserId,
                     message: 'This message was deleted'
                 },
                 { new: true }
@@ -333,12 +334,23 @@ exports.deleteMessage = async (req, res) => {
 
             console.log(`✅ Message ${messageId} deleted for everyone by ${currentUserId}`);
 
+            // CRITICAL FIX: Return complete message data for socket broadcast
             return res.status(200).json({
                 success: true,
                 message: 'Message deleted for everyone',
                 deletedMessageId: messageId,
                 deleteType: 'delete_for_everyone',
-                updatedMessage: result
+                updatedMessage: {
+                    id: result._id,
+                    _id: result._id,
+                    isDeleted: true,
+                    message: 'This message was deleted',
+                    deletedAt: result.deletedAt,
+                    deletedBy: currentUserId,
+                    senderId: result.senderId,
+                    recipientId: result.recipientId,
+                    groupId: result.groupId
+                }
             });
 
         } else {

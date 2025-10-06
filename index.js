@@ -994,48 +994,101 @@ io.on('connection', socket => {
         }
     });
 
-    socket.on('message-deleted', (data) => {
-        const { messageId, senderId, recipientId, isPrivate, deleteType } = data;
+    // socket.on('message-deleted', (data) => {
+    //     const { messageId, senderId, recipientId, isPrivate, deleteType } = data;
 
-        console.log(`🗑️ Message deletion event: ${deleteType}`, { messageId, senderId, recipientId });
+    //     console.log(`🗑️ Message deletion event: ${deleteType}`, { messageId, senderId, recipientId });
 
-        if (deleteType === 'delete_for_everyone') {
-            // Only broadcast delete_for_everyone to other users
-            if (isPrivate && recipientId) {
-                const recipientSocketId = userSocketMap.get(recipientId);
-                if (recipientSocketId) {
-                    io.to(recipientSocketId).emit('message-deleted', {
-                        messageId,
-                        senderId,
-                        deleteType: 'delete_for_everyone'
-                    });
-                    console.log(`✅ Delete for everyone broadcasted to recipient ${recipientId}`);
-                }
+    //     if (deleteType === 'delete_for_everyone') {
+
+    //         if (isPrivate && recipientId) {
+    //             const recipientSocketId = userSocketMap.get(recipientId);
+    //             if (recipientSocketId) {
+    //                 io.to(recipientSocketId).emit('message-deleted', {
+    //                     messageId,
+    //                     senderId,
+    //                     deleteType: 'delete_for_everyone'
+    //                 });
+    //                 console.log(`✅ Delete for everyone broadcasted to recipient ${recipientId}`);
+    //             } else {
+    //                 console.log(`📱 Recipient ${recipientId} is offline - will see deleted message when they come online`);
+    //             }
+    //         }
+    //     } else {
+
+    //         console.log(`✅ Delete for me: no broadcast needed for message ${messageId}`);
+    //     }
+    // });
+
+    // socket.on('group-message-deleted', (data) => {
+    //     const { messageId, senderId, groupId, deleteType } = data;
+
+    //     console.log(`🗑️ Group message deletion event: ${deleteType}`, { messageId, senderId, groupId });
+
+    //     if (deleteType === 'delete_for_everyone') {
+
+    //         socket.to(groupId).emit('group-message-deleted', {
+    //             messageId,
+    //             senderId,
+    //             groupId,
+    //             deleteType: 'delete_for_everyone'
+    //         });
+    //         console.log(`✅ Group delete for everyone broadcasted to group ${groupId}`);
+    //     } else {
+    //         console.log(`✅ Group delete for me: no broadcast needed for message ${messageId}`);
+    //     }
+    // });
+
+    socket.on('message-deleted-for-everyone', (data) => {
+        const { messageId, senderId, recipientId, isPrivate, updatedMessage } = data;
+
+        console.log(`🗑️ Message deleted for everyone (private):`, { messageId, senderId, recipientId });
+
+        if (isPrivate && recipientId) {
+            const recipientSocketId = userSocketMap.get(recipientId);
+            if (recipientSocketId) {
+                // Send the updated message data to recipient
+                io.to(recipientSocketId).emit('message-deleted-for-everyone', {
+                    messageId,
+                    senderId,
+                    updatedMessage: {
+                        id: messageId,
+                        _id: messageId,
+                        isDeleted: true,
+                        message: 'This message was deleted',
+                        deletedAt: updatedMessage.deletedAt,
+                        deletedBy: senderId
+                    }
+                });
+                console.log(`✅ Delete for everyone broadcasted to recipient ${recipientId}`);
+            } else {
+                console.log(`📱 Recipient ${recipientId} is offline - will see deleted message when they come online`);
             }
-        } else {
-            // delete_for_me: no need to broadcast to anyone
-            console.log(`✅ Delete for me: no broadcast needed for message ${messageId}`);
         }
     });
 
-    socket.on('group-message-deleted', (data) => {
-        const { messageId, senderId, groupId, deleteType } = data;
+    // FIXED: Handle delete for everyone - Group messages
+    socket.on('group-message-deleted-for-everyone', (data) => {
+        const { messageId, senderId, groupId, updatedMessage } = data;
 
-        console.log(`🗑️ Group message deletion event: ${deleteType}`, { messageId, senderId, groupId });
+        console.log(`🗑️ Group message deleted for everyone:`, { messageId, senderId, groupId });
 
-        if (deleteType === 'delete_for_everyone') {
-            // Only broadcast delete_for_everyone to group members
-            socket.to(groupId).emit('group-message-deleted', {
-                messageId,
-                senderId,
-                groupId,
-                deleteType: 'delete_for_everyone'
-            });
-            console.log(`✅ Group delete for everyone broadcasted to group ${groupId}`);
-        } else {
-            // delete_for_me: no need to broadcast to anyone
-            console.log(`✅ Group delete for me: no broadcast needed for message ${messageId}`);
-        }
+        // Broadcast to all group members EXCEPT the sender
+        socket.to(groupId).emit('group-message-deleted-for-everyone', {
+            messageId,
+            senderId,
+            groupId,
+            updatedMessage: {
+                id: messageId,
+                _id: messageId,
+                isDeleted: true,
+                message: 'This message was deleted',
+                deletedAt: updatedMessage.deletedAt,
+                deletedBy: senderId
+            }
+        });
+
+        console.log(`✅ Group delete for everyone broadcasted to group ${groupId}`);
     });
 
     socket.on('block_user', async ({ userId, blockedBy }) => {

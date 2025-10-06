@@ -20,7 +20,7 @@ const messageSchema = new mongoose.Schema({
     isPrivate: { type: Boolean, default: true },
     isDeleted: { type: Boolean, default: false },
     deletedAt: { type: Date },
-
+    deletedBy: { type: String }, // NEW: Track who deleted the message
 
     clearedBy: [{
         type: String,
@@ -58,7 +58,6 @@ const messageSchema = new mongoose.Schema({
         video: [{ type: String }]
     },
 
-    // Add forwardedFrom field
     forwardedFrom: {
         id: { type: String },
         user: { type: String },
