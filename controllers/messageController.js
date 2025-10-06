@@ -198,65 +198,26 @@ exports.getMessages = async (req, res) => {
         const isPrivate = req.query.isPrivate;
         const currentUserId = req.user.id;
 
-        console.log('📩 Fetching private messages:', {
-            senderId,
-            recipientId,
-            isPrivate,
-            currentUserId
-        });
+        console.log('📩 Fetching private messages:', { senderId, recipientId, isPrivate });
 
-        // CRITICAL: Validate parameters
         if (isPrivate !== 'true' || !senderId || !recipientId) {
             return res.status(400).json({ message: 'Invalid query parameters for private chat' });
         }
 
-        // CRITICAL FIX: Ensure IDs are strings and match exactly
-        const normalizedSenderId = senderId.toString().trim();
-        const normalizedRecipientId = recipientId.toString().trim();
-        const normalizedCurrentUserId = currentUserId.toString().trim();
-
-        console.log('🔍 Normalized IDs:', {
-            normalizedSenderId,
-            normalizedRecipientId,
-            normalizedCurrentUserId
-        });
-
-        // CRITICAL FIX: More explicit query with exact matching
         const messages = await Message.find({
-            $and: [
-                {
-                    $or: [
-                        {
-                            senderId: normalizedSenderId,
-                            recipientId: normalizedRecipientId
-                        },
-                        {
-                            senderId: normalizedRecipientId,
-                            recipientId: normalizedSenderId
-                        }
-                    ]
-                },
-                { groupId: { $exists: false } },
-                { isPrivate: true },
-                { clearedBy: { $nin: [normalizedCurrentUserId] } }
-            ]
+            $or: [
+                { senderId, recipientId },
+                { senderId: recipientId, recipientId: senderId }
+            ],
+            // REMOVED: isDeleted filter - we need to fetch deleted messages too
+            groupId: { $exists: false },
+            clearedBy: { $nin: [currentUserId] }
         })
             .populate('userId', 'name profilePicture')
             .sort({ createdAt: 1 })
             .lean();
 
-        console.log(`✅ Found ${messages.length} messages between ${normalizedSenderId} and ${normalizedRecipientId}`);
-
-        // Log first few messages for debugging
-        if (messages.length > 0) {
-            console.log('📝 Sample messages:', messages.slice(0, 3).map(m => ({
-                id: m._id,
-                from: m.senderId,
-                to: m.recipientId,
-                text: m.message?.substring(0, 50)
-            })));
-        }
-
+        // CRITICAL FIX: Process messages to handle deleted state
         const processedMessages = messages.map(msg => ({
             ...msg,
             id: msg._id.toString(),
@@ -265,6 +226,7 @@ exports.getMessages = async (req, res) => {
             deliveredAt: msg.deliveredAt || null,
             readAt: msg.readAt || null,
             profilePicture: msg.userId?.profilePicture || null,
+            // CRITICAL: Ensure deleted messages show the correct text
             message: msg.isDeleted ? 'This message was deleted' : msg.message,
             isDeleted: msg.isDeleted || false,
             deletedAt: msg.deletedAt || null,
