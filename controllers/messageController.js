@@ -204,20 +204,20 @@ exports.getMessages = async (req, res) => {
             return res.status(400).json({ message: 'Invalid query parameters for private chat' });
         }
 
-        // ✅ FIXED: Use $nin to check if userId is NOT in the clearedBy array
         const messages = await Message.find({
             $or: [
                 { senderId, recipientId },
                 { senderId: recipientId, recipientId: senderId }
             ],
-            isDeleted: false,
+            // REMOVED: isDeleted filter - we need to fetch deleted messages too
             groupId: { $exists: false },
-            clearedBy: { $nin: [currentUserId] } // Changed from $ne to $nin
+            clearedBy: { $nin: [currentUserId] }
         })
             .populate('userId', 'name profilePicture')
             .sort({ createdAt: 1 })
             .lean();
 
+        // CRITICAL FIX: Process messages to handle deleted state
         const processedMessages = messages.map(msg => ({
             ...msg,
             id: msg._id.toString(),
@@ -225,7 +225,12 @@ exports.getMessages = async (req, res) => {
             messageStatus: msg.messageStatus || 'sent',
             deliveredAt: msg.deliveredAt || null,
             readAt: msg.readAt || null,
-            profilePicture: msg.userId?.profilePicture || null
+            profilePicture: msg.userId?.profilePicture || null,
+            // CRITICAL: Ensure deleted messages show the correct text
+            message: msg.isDeleted ? 'This message was deleted' : msg.message,
+            isDeleted: msg.isDeleted || false,
+            deletedAt: msg.deletedAt || null,
+            deletedBy: msg.deletedBy || null
         }));
 
         return res.status(200).json(processedMessages);
@@ -249,11 +254,10 @@ exports.getGroupMessages = async (req, res) => {
             return res.status(400).json({ message: "Group ID is required" });
         }
 
-        // ✅ FIXED: Use $nin to check if userId is NOT in the clearedBy array
         const messages = await Message.find({
             groupId: groupId,
-            isDeleted: false,
-            clearedBy: { $nin: [currentUserId] } // Changed from $ne to $nin
+            // REMOVED: isDeleted filter - we need to fetch deleted messages too
+            clearedBy: { $nin: [currentUserId] }
         })
             .populate("userId", "name profilePicture")
             .sort({ createdAt: 1 })
@@ -261,6 +265,7 @@ exports.getGroupMessages = async (req, res) => {
 
         console.log(`✅ Found ${messages.length} messages for group ${groupId}`);
 
+        // CRITICAL FIX: Process messages to handle deleted state
         const processedMessages = messages.map(msg => ({
             ...msg,
             id: msg._id.toString(),
@@ -269,7 +274,12 @@ exports.getGroupMessages = async (req, res) => {
             messageStatus: msg.messageStatus || "sent",
             groupDeliveryStatus: msg.groupDeliveryStatus || [],
             profilePicture: msg.userId?.profilePicture || null,
-            userProfileImage: msg.userId?.profilePicture || null
+            userProfileImage: msg.userId?.profilePicture || null,
+            // CRITICAL: Ensure deleted messages show the correct text
+            message: msg.isDeleted ? 'This message was deleted' : msg.message,
+            isDeleted: msg.isDeleted || false,
+            deletedAt: msg.deletedAt || null,
+            deletedBy: msg.deletedBy || null
         }));
 
         return res.status(200).json(processedMessages);
