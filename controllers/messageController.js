@@ -282,12 +282,14 @@ exports.getGroupMessages = async (req, res) => {
     }
 };
 
-
 // New delete message controller
 exports.deleteMessage = async (req, res) => {
     try {
         const { messageId } = req.params;
-        const { senderId } = req.body;
+        const { deleteType } = req.body; // 'delete_for_me' or 'delete_for_everyone'
+        const currentUserId = req.user.id;
+
+        console.log(`🗑️ Delete request: messageId=${messageId}, deleteType=${deleteType}, userId=${currentUserId}`);
 
         const message = await Message.findById(messageId);
 
@@ -295,19 +297,57 @@ exports.deleteMessage = async (req, res) => {
             return res.status(404).json({ message: 'Message not found' });
         }
 
-        if (message.senderId !== senderId) {
-            return res.status(403).json({ message: 'Not authorized to delete this message' });
+        if (deleteType === 'delete_for_me') {
+            // Delete for me: Add userId to clearedBy array
+            const result = await Message.findByIdAndUpdate(
+                messageId,
+                { $addToSet: { clearedBy: currentUserId } },
+                { new: true }
+            );
+
+            console.log(`✅ Message ${messageId} deleted for user ${currentUserId} only`);
+
+            return res.status(200).json({
+                success: true,
+                message: 'Message deleted for you',
+                deletedMessageId: messageId,
+                deleteType: 'delete_for_me'
+            });
+
+        } else if (deleteType === 'delete_for_everyone') {
+            // Delete for everyone: Only sender can do this
+            if (message.senderId !== currentUserId) {
+                return res.status(403).json({ message: 'Only the sender can delete for everyone' });
+            }
+
+            // Mark as deleted for everyone
+            const result = await Message.findByIdAndUpdate(
+                messageId,
+                {
+                    isDeleted: true,
+                    deletedAt: new Date(),
+                    message: 'This message was deleted'
+                },
+                { new: true }
+            );
+
+            console.log(`✅ Message ${messageId} deleted for everyone by ${currentUserId}`);
+
+            return res.status(200).json({
+                success: true,
+                message: 'Message deleted for everyone',
+                deletedMessageId: messageId,
+                deleteType: 'delete_for_everyone',
+                updatedMessage: result
+            });
+
+        } else {
+            return res.status(400).json({ message: 'Invalid deleteType. Use "delete_for_me" or "delete_for_everyone"' });
         }
 
-        await Message.findByIdAndDelete(messageId);
-
-        return res.status(200).json({
-            message: 'Message deleted successfully',
-            deletedMessageId: messageId
-        });
     } catch (error) {
-        console.error('Delete message error:', error);
-        return res.status(500).json({ message: 'Failed to delete message' });
+        console.error('❌ Delete message error:', error);
+        return res.status(500).json({ message: 'Failed to delete message', error: error.message });
     }
 };
 
