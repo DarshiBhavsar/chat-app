@@ -204,20 +204,20 @@ exports.getMessages = async (req, res) => {
             return res.status(400).json({ message: 'Invalid query parameters for private chat' });
         }
 
+        // ✅ FIXED: Use $nin to check if userId is NOT in the clearedBy array
         const messages = await Message.find({
             $or: [
                 { senderId, recipientId },
                 { senderId: recipientId, recipientId: senderId }
             ],
-            // REMOVED: isDeleted filter - we need to fetch deleted messages too
+            isDeleted: false,
             groupId: { $exists: false },
-            clearedBy: { $nin: [currentUserId] }
+            clearedBy: { $nin: [currentUserId] } // Changed from $ne to $nin
         })
             .populate('userId', 'name profilePicture')
             .sort({ createdAt: 1 })
             .lean();
 
-        // CRITICAL FIX: Process messages to handle deleted state
         const processedMessages = messages.map(msg => ({
             ...msg,
             id: msg._id.toString(),
@@ -225,12 +225,7 @@ exports.getMessages = async (req, res) => {
             messageStatus: msg.messageStatus || 'sent',
             deliveredAt: msg.deliveredAt || null,
             readAt: msg.readAt || null,
-            profilePicture: msg.userId?.profilePicture || null,
-            // CRITICAL: Ensure deleted messages show the correct text
-            message: msg.isDeleted ? 'This message was deleted' : msg.message,
-            isDeleted: msg.isDeleted || false,
-            deletedAt: msg.deletedAt || null,
-            deletedBy: msg.deletedBy || null
+            profilePicture: msg.userId?.profilePicture || null
         }));
 
         return res.status(200).json(processedMessages);
@@ -291,6 +286,7 @@ exports.getGroupMessages = async (req, res) => {
         });
     }
 };
+
 
 // New delete message controller
 exports.deleteMessage = async (req, res) => {
