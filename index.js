@@ -44,12 +44,27 @@ const userSocketMap = new Map();
 const userLastSeen = new Map(); // userId -> timestamp
 const activeGroupCalls = new Map(); // groupId -> { participants: Map, callType: 'voice'|'video', initiator: string }
 
+const userHeartbeats = new Map();
+
 // Helper function to update last seen
+// const updateLastSeen = async (userId) => {
+//     const timestamp = new Date();
+//     userLastSeen.set(userId, timestamp);
+//     try {
+//         await User.findByIdAndUpdate(userId, {
+//             lastSeen: timestamp,
+//             isOnline: true
+//         });
+//     } catch (error) {
+//         console.error('Error updating last seen in database:', error);
+//     }
+// };
+
 const updateLastSeen = async (userId) => {
     const timestamp = new Date();
     userLastSeen.set(userId, timestamp);
+    userHeartbeats.set(userId, timestamp); // Track heartbeat
 
-    // Optionally persist to database
     try {
         await User.findByIdAndUpdate(userId, {
             lastSeen: timestamp,
@@ -58,6 +73,17 @@ const updateLastSeen = async (userId) => {
     } catch (error) {
         console.error('Error updating last seen in database:', error);
     }
+};
+
+const isUserTrulyOnline = (userId) => {
+    const socketId = userSocketMap.get(userId);
+    const hasSocket = socketId && onlineUsers.has(socketId);
+
+    // Check if heartbeat is recent (within last 45 seconds)
+    const lastHeartbeat = userHeartbeats.get(userId);
+    const heartbeatRecent = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 45000);
+
+    return hasSocket && heartbeatRecent;
 };
 
 // Helper function to set user offline
@@ -151,11 +177,35 @@ io.on('connection', socket => {
         try {
             const user = jwt.decode(token);
 
+            // onlineUsers.set(socket.id, { id: user.id, name: user.username });
+            // userSocketMap.set(user.id, socket.id);
+            // await updateLastSeen(user.id);
+
+            // console.log(`✅ User joined: ${user.username} (UserID: ${user.id}, SocketID: ${socket.id})`);
+
+
+            const existingSocketId = userSocketMap.get(user.id);
+            if (existingSocketId && existingSocketId !== socket.id) {
+                onlineUsers.delete(existingSocketId);
+                console.log(`🔄 Replacing old socket connection for user ${user.id}`);
+            }
+
             onlineUsers.set(socket.id, { id: user.id, name: user.username });
             userSocketMap.set(user.id, socket.id);
             await updateLastSeen(user.id);
 
             console.log(`✅ User joined: ${user.username} (UserID: ${user.id}, SocketID: ${socket.id})`);
+
+            // Broadcast online status to all clients
+            io.emit('user-status-updated', {
+                userId: user.id,
+                isOnline: true,
+                lastSeen: new Date(),
+                lastSeenText: 'Online'
+            });
+
+
+
 
             // CRITICAL FIX: Process undelivered GROUP messages with immediate sender notification
             try {
@@ -237,6 +287,34 @@ io.on('connection', socket => {
         }
     });
 
+
+    socket.on('heartbeat', async ({ userId }) => {
+        if (userId) {
+            await updateLastSeen(userId);
+
+            // Emit updated status to all connected clients
+            io.emit('user-status-updated', {
+                userId,
+                isOnline: true,
+                lastSeen: new Date()
+            });
+
+            console.log(`💓 Heartbeat received from user ${userId}`);
+        }
+    });
+
+    // Add this event to manually request online status
+    socket.on('request-online-status', ({ userId }) => {
+        const isOnline = isUserTrulyOnline(userId);
+        const lastSeen = userLastSeen.get(userId) || new Date();
+
+        socket.emit('user-status-response', {
+            userId,
+            isOnline,
+            lastSeen,
+            lastSeenText: isOnline ? 'Online' : formatLastSeen(lastSeen)
+        });
+    });
 
     socket.on('get-online-users', () => {
         const onlineUsersWithLastSeen = Array.from(onlineUsers.values()).map(u => ({
@@ -1722,10 +1800,38 @@ io.on('connection', socket => {
             const user = onlineUsers.get(socket.id);
             const roomsArray = Array.from(socket.rooms);
 
-            // Set user offline and update last seen
-            await setUserOffline(user.id);
+            // Wait a bit before marking offline (grace period for reconnection)
+            setTimeout(async () => {
+                // Check if user has reconnected
+                const currentSocketId = userSocketMap.get(user.id);
 
-            // Clean up typing indicators
+                // Only mark offline if they haven't reconnected
+                if (!currentSocketId || currentSocketId === socket.id) {
+                    await setUserOffline(user.id);
+
+                    onlineUsers.delete(socket.id);
+                    userSocketMap.delete(user.id);
+                    userHeartbeats.delete(user.id); // Clear heartbeat
+
+                    const lastSeen = getUserLastSeen(user.id);
+
+                    // Broadcast offline status
+                    io.emit('user-status-updated', {
+                        userId: user.id,
+                        isOnline: false,
+                        lastSeen,
+                        lastSeenText: formatLastSeen(lastSeen)
+                    });
+
+                    io.emit('online-users', Array.from(onlineUsers.values()));
+
+                    console.log(`❌ User disconnected: ${user.name} (ID: ${user.id})`);
+                } else {
+                    console.log(`✅ User ${user.id} reconnected, keeping online status`);
+                }
+            }, 3000); // 3 second grace period
+
+            // Clean up typing indicators immediately
             roomsArray.forEach(roomId => {
                 if (roomId !== socket.id) {
                     socket.to(roomId).emit('group-stop-typing', {
@@ -1736,7 +1842,7 @@ io.on('connection', socket => {
                 }
             });
 
-            // Clean up group calls
+            // Clean up group calls immediately
             activeGroupCalls.forEach((groupCall, groupId) => {
                 if (groupCall.participants.has(user.id)) {
                     groupCall.participants.delete(user.id);
@@ -1755,21 +1861,6 @@ io.on('connection', socket => {
                     }
                 }
             });
-
-            onlineUsers.delete(socket.id);
-            userSocketMap.delete(user.id);
-
-            const lastSeen = getUserLastSeen(user.id);
-            io.emit('user-left-broadcast', {
-                userId: user.id,
-                isOnline: false,
-                lastSeen,
-                lastSeenText: formatLastSeen(lastSeen)
-            });
-
-            io.emit('online-users', Array.from(onlineUsers.values()));
-
-            console.log(`❌ User disconnected: ${user.name} (ID: ${user.id})`);
         }
     });
 });
