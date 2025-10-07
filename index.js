@@ -1627,7 +1627,6 @@ io.on('connection', socket => {
         }
     });
 
-
     socket.on('group-message-read', async (data) => {
         const { messageId, userId, groupId, readAt, messageStatus } = data;
         console.log(`👁️ Group message read event: ${messageId} by ${userId} in group ${groupId}`);
@@ -1641,32 +1640,32 @@ io.on('connection', socket => {
                 return;
             }
 
-            // Update message status to read in database
-            if (message.messageStatus !== 'read') {
-                await Message.findByIdAndUpdate(messageId, {
-                    messageStatus: 'read',
-                    readAt: new Date(readAt),
-                    deliveredAt: message.deliveredAt || new Date(readAt)
-                });
-                console.log(`👁️ Updated message ${messageId} status to read in database`);
-            }
-
-            // CRITICAL: Always notify the message sender immediately
+            // CRITICAL FIX: Immediately notify the sender
             if (message.senderId && message.senderId !== userId) {
                 const senderSocketId = userSocketMap.get(message.senderId);
+
                 if (senderSocketId) {
+                    // Emit IMMEDIATELY to sender's socket
                     io.to(senderSocketId).emit('group-message-read', {
                         messageId,
                         userId,
                         groupId,
-                        readAt: new Date(readAt),
+                        readAt: readAt || new Date().toISOString(),
                         messageStatus: 'read'
                     });
-                    console.log(`👁️ ✅ Read notification sent to sender ${message.senderId}`);
+
+                    console.log(`👁️ ✅ IMMEDIATE group read notification sent to sender ${message.senderId}`);
                 } else {
-                    console.log(`👁️ ❌ Sender ${message.senderId} is offline, cannot notify`);
+                    console.log(`👁️ ❌ Sender ${message.senderId} is offline`);
                 }
             }
+
+            // Update message status in database (async, don't block socket notification)
+            Message.findByIdAndUpdate(messageId, {
+                messageStatus: 'read',
+                readAt: new Date(readAt || Date.now()),
+                deliveredAt: message.deliveredAt || new Date(readAt || Date.now())
+            }).catch(err => console.error('Error updating message in DB:', err));
 
             // Update user's last seen
             await updateLastSeen(userId);
@@ -1676,26 +1675,45 @@ io.on('connection', socket => {
         }
     });
 
+
     // Listen for message read events from clients
     socket.on('message-read', async (data) => {
         const { messageId, userId, readAt, messageStatus } = data;
         console.log(`👁️ Received message-read event: ${messageId} by ${userId}`);
 
-        // Find the message sender and notify them
-        const Message = require('./models/message');
-        const message = await Message.findById(messageId);
+        try {
+            const Message = require('./models/message');
+            const message = await Message.findById(messageId);
 
-        if (message && message.senderId) {
-            const senderSocketId = userSocketMap.get(message.senderId);
-            if (senderSocketId) {
-                io.to(senderSocketId).emit('message-read', {
-                    messageId,
-                    userId,
-                    readAt,
-                    messageStatus
-                });
-                console.log(`👁️ ✅ Read status sent to sender ${message.senderId}`);
+            if (!message) {
+                console.error(`❌ Message ${messageId} not found`);
+                return;
             }
+
+            // CRITICAL FIX: Immediately notify the sender via socket
+            if (message.senderId && message.senderId !== userId) {
+                const senderSocketId = userSocketMap.get(message.senderId);
+
+                if (senderSocketId) {
+                    // Emit IMMEDIATELY to sender's socket
+                    io.to(senderSocketId).emit('message-read', {
+                        messageId,
+                        userId,
+                        readAt: readAt || new Date().toISOString(),
+                        messageStatus: 'read'
+                    });
+
+                    console.log(`👁️ ✅ IMMEDIATE read notification sent to sender ${message.senderId}`);
+                } else {
+                    console.log(`👁️ ❌ Sender ${message.senderId} is offline`);
+                }
+            }
+
+            // Update last seen
+            await updateLastSeen(userId);
+
+        } catch (error) {
+            console.error('❌ Error handling message-read:', error);
         }
     });
 
