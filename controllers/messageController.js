@@ -724,26 +724,28 @@ exports.markMessageRead = async (req, res) => {
         const { messageId } = req.params;
         const { userId } = req.body;
 
+        console.log(`👁️ API: Marking message ${messageId} as read by ${userId}`);
+
         const message = await Message.findById(messageId);
         if (!message) {
             return res.status(404).json({ message: 'Message not found' });
         }
 
         let updated = false;
+        const currentTime = new Date();
 
         // For private messages
         if (message.recipientId && message.recipientId === userId) {
             if (message.messageStatus !== 'read') {
                 message.messageStatus = 'read';
-                message.readAt = new Date();
+                message.readAt = currentTime;
 
-                // Ensure it's also marked as delivered if not already
                 if (!message.deliveredAt) {
-                    message.deliveredAt = new Date();
+                    message.deliveredAt = currentTime;
                 }
 
                 updated = true;
-                console.log(`👁️ Private message ${messageId} marked as read by user ${userId}`);
+                console.log(`👁️ Private message ${messageId} marked as read`);
             }
         }
         // For group messages
@@ -752,46 +754,51 @@ exports.markMessageRead = async (req, res) => {
                 status => status.userId === userId
             );
 
-            if (userDeliveryStatus && !userDeliveryStatus.readAt) {
-                userDeliveryStatus.readAt = new Date();
+            if (userDeliveryStatus) {
+                if (!userDeliveryStatus.readAt) {
+                    userDeliveryStatus.readAt = currentTime;
 
-                // Ensure it's also marked as delivered for this user
-                if (!userDeliveryStatus.deliveredAt) {
-                    userDeliveryStatus.deliveredAt = new Date();
+                    if (!userDeliveryStatus.deliveredAt) {
+                        userDeliveryStatus.deliveredAt = currentTime;
+                    }
+
+                    updated = true;
+                    console.log(`👁️ Group message ${messageId} marked as read by ${userId}`);
                 }
 
-                updated = true;
-                console.log(`👁️ Group message ${messageId} marked as read by user ${userId}`);
-
-                // FIXED: Update overall message status for groups based on read count
+                // Update overall message status
                 const totalMembers = message.groupDeliveryStatus.length;
                 const readCount = message.groupDeliveryStatus.filter(s => s.readAt).length;
 
-                // If all members have read it, update main status
-                if (readCount === totalMembers && message.messageStatus !== 'read') {
+                if (readCount >= Math.ceil(totalMembers * 0.5) && message.messageStatus !== 'read') {
                     message.messageStatus = 'read';
-                    message.readAt = new Date();
+                    message.readAt = currentTime;
                 }
             }
         }
 
+        // CRITICAL: Save to database
         if (updated) {
             await message.save();
         }
 
+        // CRITICAL: Return immediately with updated status
         return res.status(200).json({
             success: true,
             messageId,
             messageStatus: message.messageStatus,
-            readAt: message.readAt || new Date(),
+            readAt: message.readAt || currentTime,
             groupDeliveryStatus: message.groupDeliveryStatus
         });
+
     } catch (error) {
-        console.error('Mark read error:', error);
-        return res.status(500).json({ message: 'Failed to mark message as read' });
+        console.error('❌ Mark read error:', error);
+        return res.status(500).json({
+            message: 'Failed to mark message as read',
+            error: error.message
+        });
     }
 };
-
 // Mark multiple messages as read (when user opens chat)
 exports.markMultipleMessagesRead = async (req, res) => {
     try {
