@@ -537,28 +537,27 @@ io.on('connection', socket => {
                         console.log(`📬 ✅ Group message ${messageId} auto-marked as DELIVERED and sender notified`);
 
                         // CRITICAL: Set up auto-read logic after 3 seconds
-                        setTimeout(async () => {
-                            try {
-                                await Message.findByIdAndUpdate(messageId, {
-                                    messageStatus: 'read',
-                                    readAt: new Date()
-                                });
+                        // setTimeout(async () => {
+                        //     try {
+                        //         await Message.findByIdAndUpdate(messageId, {
+                        //             messageStatus: 'read',
+                        //             readAt: new Date()
+                        //         });
 
-                                // Notify sender about read status
-                                socket.emit('group-message-read', {
-                                    messageId,
-                                    userId: 'auto_read',
-                                    groupId: payload.groupId,
-                                    readAt: new Date(),
-                                    messageStatus: 'read'
-                                });
+                        //         socket.emit('group-message-read', {
+                        //             messageId,
+                        //             userId: 'auto_read',
+                        //             groupId: payload.groupId,
+                        //             readAt: new Date(),
+                        //             messageStatus: 'read'
+                        //         });
 
-                                console.log(`👁️ ✅ Group message ${messageId} auto-marked as READ and sender notified`);
-                            } catch (error) {
-                                console.error('❌ Error auto-marking message as read:', error);
-                            }
-                        }, 3000);
-
+                        //         console.log(`👁️ ✅ Group message ${messageId} auto-marked as READ and sender notified`);
+                        //     } catch (error) {
+                        //         console.error('❌ Error auto-marking message as read:', error);
+                        //     }
+                        // }, 3000);
+                        console.log(`📬 ✅ Group message ${messageId} auto-marked as DELIVERED and sender notified`);
                     } else {
                         console.log(`📱 ❌ No online members in group, message remains as 'sent'`);
                     }
