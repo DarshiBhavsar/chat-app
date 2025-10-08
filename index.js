@@ -458,27 +458,34 @@ io.on('connection', socket => {
     });
 
     socket.on('typing', async ({ from, to }) => {
-        // Update last seen on typing activity
+        console.log(`🟢 User ${from} is typing to ${to}`);
+
         await updateLastSeen(from);
 
         if (to) {
             const recipientSocketId = userSocketMap.get(to);
             if (recipientSocketId) {
                 io.to(recipientSocketId).emit('user-typing', { from, to });
+                console.log(`✅ Typing event delivered to ${to}`);
+            } else {
+                console.log(`❌ Recipient ${to} is offline`);
             }
-        } else {
-            socket.broadcast.emit('user-typing', { from });
         }
     });
 
-    socket.on('stop-typing', ({ from, to }) => {
+    socket.on('stop-typing', async ({ from, to }) => {
+        console.log(`🔴 User ${from} stopped typing to ${to}`);
+
+        await updateLastSeen(from);
+
         if (to) {
             const recipientSocketId = userSocketMap.get(to);
             if (recipientSocketId) {
                 io.to(recipientSocketId).emit('user-stop-typing', { from, to });
+                console.log(`✅ Stop-typing event delivered to ${to}`);
+            } else {
+                console.log(`❌ Recipient ${to} is offline`);
             }
-        } else {
-            socket.broadcast.emit('user-stop-typing', { from });
         }
     });
 
@@ -687,15 +694,14 @@ io.on('connection', socket => {
     // });
 
     socket.on('group-typing', async ({ groupId, userId, userName }) => {
-        console.log(`🟢 Server: User ${userName} (${userId}) is typing in group ${groupId}`);
+        console.log(`🟢 User ${userName} (${userId}) is typing in group ${groupId}`);
 
-        // Update last seen on typing activity
         await updateLastSeen(userId);
 
-        // CRITICAL FIX: Ensure socket is in the group room
+        // Ensure socket is in the group room
         if (!socket.rooms.has(groupId)) {
             socket.join(groupId);
-            console.log(`🟢 Added socket ${socket.id} to group room ${groupId}`);
+            console.log(`🔄 Added socket ${socket.id} to group room ${groupId}`);
         }
 
         // Broadcast to ALL group members EXCEPT the sender
@@ -705,18 +711,19 @@ io.on('connection', socket => {
             username: userName
         });
 
-        console.log(`🟢 Broadcasted group-typing to group ${groupId} from user ${userName}`);
+        console.log(`✅ Group-typing broadcasted to group ${groupId}`);
     });
 
+
     socket.on('group-stop-typing', async ({ groupId, userId, userName }) => {
-        console.log(`🟡 Server: User ${userName} (${userId}) stopped typing in group ${groupId}`);
+        console.log(`🔴 User ${userName} (${userId}) stopped typing in group ${groupId}`);
 
         await updateLastSeen(userId);
 
-        // CRITICAL FIX: Ensure socket is in the group room
+        // Ensure socket is in the group room
         if (!socket.rooms.has(groupId)) {
             socket.join(groupId);
-            console.log(`🟡 Added socket ${socket.id} to group room ${groupId}`);
+            console.log(`🔄 Added socket ${socket.id} to group room ${groupId}`);
         }
 
         // Broadcast to ALL group members EXCEPT the sender
@@ -726,7 +733,7 @@ io.on('connection', socket => {
             username: userName
         });
 
-        console.log(`🟡 Broadcasted group-stop-typing to group ${groupId} from user ${userName}`);
+        console.log(`✅ Group-stop-typing broadcasted to group ${groupId}`);
     });
 
     // Individual call handlers (existing) - with last seen updates
