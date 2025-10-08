@@ -723,13 +723,7 @@ io.on('connection', socket => {
             console.log(`🔄 Added socket ${socket.id} to group room ${groupId}`);
         }
 
-        // Add user to typing set for this group
-        if (!groupTypingUsers.has(groupId)) {
-            groupTypingUsers.set(groupId, new Set());
-        }
-        groupTypingUsers.get(groupId).add(userId);
-
-        // Clear existing timeout for this user
+        // Clear existing timeout for this user in this group
         const timeoutKey = `${groupId}-${userId}`;
         const existingTimeout = groupTypingTimeouts.get(timeoutKey);
         if (existingTimeout) {
@@ -743,31 +737,20 @@ io.on('connection', socket => {
             username: userName
         });
 
-        console.log(`✅ Group-typing broadcasted to group ${groupId}. Total typing: ${groupTypingUsers.get(groupId).size}`);
-
-        // Set timeout to auto-stop typing after 5 seconds
-        const timeout = setTimeout(() => {
-            console.log(`⏰ Server auto-stopping typing for ${userName} in group ${groupId}`);
-
-            // Remove from typing set
-            if (groupTypingUsers.has(groupId)) {
-                groupTypingUsers.get(groupId).delete(userId);
-                if (groupTypingUsers.get(groupId).size === 0) {
-                    groupTypingUsers.delete(groupId);
-                }
-            }
-
-            // Emit stop typing
+        // ✅ CRITICAL: Auto-emit stop-typing after 4 seconds if no new typing event
+        const newTimeout = setTimeout(() => {
+            console.log(`⏰ Auto-stopping typing for ${userName} in group ${groupId}`);
             socket.to(groupId).emit('group-stop-typing', {
                 groupId,
                 id: userId,
                 username: userName
             });
-
             groupTypingTimeouts.delete(timeoutKey);
-        }, 5000);
+        }, 4000); // 4 seconds - slightly longer than client timeout
 
-        groupTypingTimeouts.set(timeoutKey, timeout);
+        groupTypingTimeouts.set(timeoutKey, newTimeout);
+
+        console.log(`✅ Group-typing broadcasted to group ${groupId}`);
     });
 
     socket.on('group-stop-typing', async ({ groupId, userId, userName }) => {
@@ -775,20 +758,12 @@ io.on('connection', socket => {
 
         await updateLastSeen(userId);
 
-        // Clear the timeout
+        // Clear the auto-timeout
         const timeoutKey = `${groupId}-${userId}`;
         const existingTimeout = groupTypingTimeouts.get(timeoutKey);
         if (existingTimeout) {
             clearTimeout(existingTimeout);
             groupTypingTimeouts.delete(timeoutKey);
-        }
-
-        // Remove from typing set
-        if (groupTypingUsers.has(groupId)) {
-            groupTypingUsers.get(groupId).delete(userId);
-            if (groupTypingUsers.get(groupId).size === 0) {
-                groupTypingUsers.delete(groupId);
-            }
         }
 
         // Ensure socket is in the group room
@@ -804,7 +779,7 @@ io.on('connection', socket => {
             username: userName
         });
 
-        console.log(`✅ Group-stop-typing broadcasted to group ${groupId}. Total typing: ${groupTypingUsers.get(groupId)?.size || 0}`);
+        console.log(`✅ Group-stop-typing broadcasted to group ${groupId}`);
     });
 
     // Individual call handlers (existing) - with last seen updates
