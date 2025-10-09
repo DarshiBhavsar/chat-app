@@ -46,6 +46,7 @@ const activeGroupCalls = new Map(); // groupId -> { participants: Map, callType:
 const groupTypingUsers = new Map(); // Map<groupId, Set<userId>>
 const groupTypingTimeouts = new Map();
 const userHeartbeats = new Map();
+const TYPING_TIMEOUT_DURATION = 6000;
 
 // Helper function to update last seen
 // const updateLastSeen = async (userId) => {
@@ -713,9 +714,19 @@ io.on('connection', socket => {
     // });
 
     socket.on('group-typing', async ({ groupId, userId, userName }) => {
-        console.log(`🟢 User ${userName} (${userId}) is typing in group ${groupId}`);
+        console.log(`🟢 Server: User ${userName} (${userId}) is typing in group ${groupId}`);
 
         await updateLastSeen(userId);
+
+        // CRITICAL FIX: Track typing users per group on the server
+        if (!groupTypingUsers.has(groupId)) {
+            groupTypingUsers.set(groupId, new Set());
+        }
+
+        const typersInGroup = groupTypingUsers.get(groupId);
+        typersInGroup.add(userId);
+
+        console.log(`📊 Current typers in group ${groupId}:`, Array.from(typersInGroup));
 
         // Ensure socket is in the group room
         if (!socket.rooms.has(groupId)) {
@@ -723,20 +734,66 @@ io.on('connection', socket => {
             console.log(`🔄 Added socket ${socket.id} to group room ${groupId}`);
         }
 
-        // Broadcast to ALL group members EXCEPT the sender
-        socket.to(groupId).emit('group-typing', {
+        // CRITICAL: Broadcast to ALL group members INCLUDING sender for consistency
+        io.to(groupId).emit('group-typing', {
             groupId,
             id: userId,
             username: userName
         });
 
-        console.log(`✅ Group-typing broadcasted to group ${groupId}`);
+        console.log(`✅ Group-typing broadcasted to ALL members in group ${groupId}`);
+
+        // CRITICAL FIX: Auto-clear typing after timeout
+        const timeoutKey = `${groupId}-${userId}`;
+
+        // Clear existing timeout for this user
+        if (groupTypingTimeouts.has(timeoutKey)) {
+            clearTimeout(groupTypingTimeouts.get(timeoutKey));
+        }
+
+        // Set new timeout
+        const timeout = setTimeout(() => {
+            console.log(`⏰ Auto-clearing typing for ${userName} in group ${groupId}`);
+
+            const typersInGroup = groupTypingUsers.get(groupId);
+            if (typersInGroup) {
+                typersInGroup.delete(userId);
+
+                if (typersInGroup.size === 0) {
+                    groupTypingUsers.delete(groupId);
+                }
+            }
+
+            // Broadcast stop-typing to all group members
+            io.to(groupId).emit('group-stop-typing', {
+                groupId,
+                id: userId,
+                username: userName
+            });
+
+            groupTypingTimeouts.delete(timeoutKey);
+            console.log(`✅ Auto-cleared typing for ${userName} in group ${groupId}`);
+        }, TYPING_TIMEOUT_DURATION);
+
+        groupTypingTimeouts.set(timeoutKey, timeout);
     });
 
     socket.on('group-stop-typing', async ({ groupId, userId, userName }) => {
-        console.log(`🔴 User ${userName} (${userId}) stopped typing in group ${groupId}`);
+        console.log(`🔴 Server: User ${userName} (${userId}) stopped typing in group ${groupId}`);
 
         await updateLastSeen(userId);
+
+        // CRITICAL FIX: Remove user from server-side typing tracking
+        const typersInGroup = groupTypingUsers.get(groupId);
+        if (typersInGroup) {
+            typersInGroup.delete(userId);
+
+            if (typersInGroup.size === 0) {
+                groupTypingUsers.delete(groupId);
+            }
+
+            console.log(`📊 Remaining typers in group ${groupId}:`, Array.from(typersInGroup || []));
+        }
 
         // Clear the auto-timeout
         const timeoutKey = `${groupId}-${userId}`;
@@ -744,6 +801,7 @@ io.on('connection', socket => {
         if (existingTimeout) {
             clearTimeout(existingTimeout);
             groupTypingTimeouts.delete(timeoutKey);
+            console.log(`🧹 Cleared timeout for ${userName} in group ${groupId}`);
         }
 
         // Ensure socket is in the group room
@@ -752,14 +810,14 @@ io.on('connection', socket => {
             console.log(`🔄 Added socket ${socket.id} to group room ${groupId}`);
         }
 
-        // Broadcast to ALL group members EXCEPT the sender
-        socket.to(groupId).emit('group-stop-typing', {
+        // CRITICAL: Broadcast to ALL group members INCLUDING sender
+        io.to(groupId).emit('group-stop-typing', {
             groupId,
             id: userId,
             username: userName
         });
 
-        console.log(`✅ Group-stop-typing broadcasted to group ${groupId}`);
+        console.log(`✅ Group-stop-typing broadcasted to ALL members in group ${groupId}`);
     });
 
     // Individual call handlers (existing) - with last seen updates
