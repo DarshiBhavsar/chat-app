@@ -22,19 +22,22 @@ const processUser = (user, baseUrl) => {
     };
 };
 
-// Helper function to safely process group data
-const processGroupData = (group, baseUrl) => {
+// Helper function to safely process group data with admin info
+const processGroupData = (group, baseUrl, currentUserId = null) => {
     const creator = processUser(group.creator, baseUrl);
     const members = group.members
         .filter(member => member !== null)
         .map(member => processUser(member, baseUrl))
         .filter(member => member !== null);
 
+    const isAdmin = currentUserId ? group.creator._id.toString() === currentUserId.toString() : false;
+
     return {
         ...group.toObject(),
         profilePicture: getFullImageUrl(group.profilePicture, baseUrl),
         creator,
-        members
+        members,
+        isAdmin // Add admin flag
     };
 };
 
@@ -47,7 +50,7 @@ exports.createGroup = async (req, res) => {
             description,
             creator: createdBy,
             members: members.length ? members : [createdBy],
-            profilePicture: profilePicture || null // Add profilePicture field
+            profilePicture: profilePicture || null
         });
 
         const savedGroup = await newGroup.save();
@@ -69,7 +72,8 @@ exports.createGroup = async (req, res) => {
             members: populatedGroup.members.map(member => ({
                 ...member.toObject(),
                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
-            }))
+            })),
+            isAdmin: true // Creator is always admin
         };
 
         res.status(201).json(responseGroup);
@@ -86,7 +90,8 @@ exports.getAllGroups = async (req, res) => {
             .populate('members', 'username email profilePicture');
 
         const baseUrl = getBaseUrl(req);
-        const groupsWithFullUrls = groups.map(group => processGroupData(group, baseUrl));
+        const currentUserId = req.user?.id;
+        const groupsWithFullUrls = groups.map(group => processGroupData(group, baseUrl, currentUserId));
 
         res.json(groupsWithFullUrls);
     } catch (error) {
@@ -113,14 +118,13 @@ exports.getUserGroups = async (req, res) => {
             .populate('members', 'username email profilePicture');
 
         const baseUrl = getBaseUrl(req);
-        const groupsWithFullUrls = myGroups.map(group => processGroupData(group, baseUrl));
+        const groupsWithFullUrls = myGroups.map(group => processGroupData(group, baseUrl, userId));
 
         res.json(groupsWithFullUrls);
     } catch (error) {
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
-
 
 // Add user to group
 exports.addUserToGroup = async (req, res) => {
@@ -146,6 +150,7 @@ exports.addUserToGroup = async (req, res) => {
             .populate('members', 'username email profilePicture');
 
         const baseUrl = getBaseUrl(req);
+        const currentUserId = req.user?.id;
 
         const responseGroup = {
             ...updatedGroup.toObject(),
@@ -157,7 +162,8 @@ exports.addUserToGroup = async (req, res) => {
             members: updatedGroup.members.map(member => ({
                 ...member.toObject(),
                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
-            }))
+            })),
+            isAdmin: currentUserId ? updatedGroup.creator._id.toString() === currentUserId.toString() : false
         };
 
         res.json(responseGroup);
@@ -166,7 +172,7 @@ exports.addUserToGroup = async (req, res) => {
     }
 };
 
-// Remove user from group
+// Remove user from group (legacy - only creator can remove others)
 exports.removeUserFromGroup = async (req, res) => {
     try {
         const group = await Group.findById(req.params.groupId);
@@ -175,10 +181,10 @@ exports.removeUserFromGroup = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        // Check if requesting user is the creator or themselves
+        // Check if requesting user is the creator or removing themselves
         if (group.creator.toString() !== req.user.id &&
             req.params.userId !== req.user.id) {
-            return res.status(403).json({ message: 'Not authorized' });
+            return res.status(403).json({ message: 'Only group admin can remove members' });
         }
 
         group.members = group.members.filter(
@@ -192,6 +198,7 @@ exports.removeUserFromGroup = async (req, res) => {
     }
 };
 
+// Leave group
 exports.leaveGroup = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -201,6 +208,11 @@ exports.leaveGroup = async (req, res) => {
 
         if (!group) {
             return res.status(404).json({ message: 'Group not found' });
+        }
+
+        // Check if user is the creator
+        if (group.creator.toString() === userId) {
+            return res.status(400).json({ message: 'Group admin cannot leave. Please delete the group or transfer admin rights first.' });
         }
 
         // Check if user is actually a member of the group
@@ -213,37 +225,23 @@ exports.leaveGroup = async (req, res) => {
             groupId,
             { $pull: { members: userId } },
             { new: true }
-        ).populate('members', 'username email profilePicture');
-
-        // If group is empty after user leaves, delete it
-        if (updatedGroup.members.length === 0) {
-            // Delete group profile picture if it exists
-            if (group.profilePicture) {
-                try {
-                    const filename = path.basename(group.profilePicture);
-                    const imagePath = path.join(__dirname, '..', 'uploads', filename);
-                    await fs.unlink(imagePath);
-                } catch (error) {
-                    console.log('Group image deletion failed:', error.message);
-                }
-            }
-
-            await Group.findByIdAndDelete(groupId);
-            return res.json({
-                message: 'Group left and deleted (was empty)',
-                deleted: true
-            });
-        }
+        ).populate('members', 'username email profilePicture')
+            .populate('creator', 'username email profilePicture');
 
         const baseUrl = getBaseUrl(req);
 
         const responseGroup = {
             ...updatedGroup.toObject(),
             profilePicture: getFullImageUrl(updatedGroup.profilePicture, baseUrl),
+            creator: {
+                ...updatedGroup.creator.toObject(),
+                profilePicture: getFullImageUrl(updatedGroup.creator.profilePicture, baseUrl)
+            },
             members: updatedGroup.members.map(member => ({
                 ...member.toObject(),
                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
-            }))
+            })),
+            isAdmin: false
         };
 
         res.json({
@@ -256,7 +254,7 @@ exports.leaveGroup = async (req, res) => {
     }
 };
 
-// Add member to group
+// Add member to group (only admin can add)
 exports.addMemberToGroup = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -269,9 +267,9 @@ exports.addMemberToGroup = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        // Check if requester is the group creator or a member
-        if (group.creator.toString() !== requesterId && !group.members.includes(requesterId)) {
-            return res.status(403).json({ message: 'Not authorized to add members' });
+        // Only group creator (admin) can add members
+        if (group.creator.toString() !== requesterId) {
+            return res.status(403).json({ message: 'Only group admin can add members' });
         }
 
         // Check if user is already a member
@@ -298,7 +296,8 @@ exports.addMemberToGroup = async (req, res) => {
             members: updatedGroup.members.map(member => ({
                 ...member.toObject(),
                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
-            }))
+            })),
+            isAdmin: true
         };
 
         res.json(responseGroup);
@@ -308,7 +307,7 @@ exports.addMemberToGroup = async (req, res) => {
     }
 };
 
-// Remove member from group
+// Remove member from group (only admin can remove)
 exports.removeMemberFromGroup = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -321,9 +320,14 @@ exports.removeMemberFromGroup = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        // Check if requester is the group creator or removing themselves
-        if (group.creator.toString() !== requesterId && userId !== requesterId) {
-            return res.status(403).json({ message: 'Not authorized to remove this member' });
+        // Only group creator (admin) can remove members
+        if (group.creator.toString() !== requesterId) {
+            return res.status(403).json({ message: 'Only group admin can remove members' });
+        }
+
+        // Admin cannot remove themselves
+        if (userId === requesterId) {
+            return res.status(400).json({ message: 'Admin cannot remove themselves. Please delete the group instead.' });
         }
 
         const updatedGroup = await Group.findByIdAndUpdate(
@@ -332,26 +336,6 @@ exports.removeMemberFromGroup = async (req, res) => {
             { new: true }
         ).populate('members', 'username email profilePicture')
             .populate('creator', 'username email profilePicture');
-
-        // If group is empty, delete it
-        if (updatedGroup.members.length === 0) {
-            // Delete group profile picture if it exists
-            if (group.profilePicture) {
-                try {
-                    const filename = path.basename(group.profilePicture);
-                    const imagePath = path.join(__dirname, '..', 'uploads', filename);
-                    await fs.unlink(imagePath);
-                } catch (error) {
-                    console.log('Group image deletion failed:', error.message);
-                }
-            }
-
-            await Group.findByIdAndDelete(groupId);
-            return res.json({
-                message: 'Member removed and group deleted (was empty)',
-                deleted: true
-            });
-        }
 
         const baseUrl = getBaseUrl(req);
 
@@ -365,8 +349,18 @@ exports.removeMemberFromGroup = async (req, res) => {
             members: updatedGroup.members.map(member => ({
                 ...member.toObject(),
                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
-            }))
+            })),
+            isAdmin: true
         };
+
+        // Emit socket event
+        if (req.io) {
+            req.io.emit('member_removed', {
+                groupId: updatedGroup._id.toString(),
+                userId,
+                removedBy: requesterId
+            });
+        }
 
         res.json({
             message: 'Member removed successfully',
@@ -378,29 +372,38 @@ exports.removeMemberFromGroup = async (req, res) => {
     }
 };
 
+// Update group profile picture (only admin)
 exports.updateGroupProfilePicture = async (req, res) => {
     try {
         const { groupId } = req.params;
         const { profilePicture } = req.body;
+        const requesterId = req.user.id;
 
-        const group = await Group.findByIdAndUpdate(
-            groupId,
-            { profilePicture },
-            { new: true }
-        );
+        const group = await Group.findById(groupId);
 
         if (!group) {
             return res.status(404).json({ message: 'Group not found' });
         }
 
+        // Only admin can update profile picture
+        if (group.creator.toString() !== requesterId) {
+            return res.status(403).json({ message: 'Only group admin can update profile picture' });
+        }
+
+        const updatedGroup = await Group.findByIdAndUpdate(
+            groupId,
+            { profilePicture },
+            { new: true }
+        );
+
         const baseUrl = getBaseUrl(req);
-        const fullImageUrl = getFullImageUrl(group.profilePicture, baseUrl);
+        const fullImageUrl = getFullImageUrl(updatedGroup.profilePicture, baseUrl);
 
         // Emit socket event to notify all clients
         if (req.io) {
             req.io.emit('group_profile_picture_updated', {
-                groupId: group._id.toString(),
-                groupName: group.name,
+                groupId: updatedGroup._id.toString(),
+                groupName: updatedGroup.name,
                 groupProfilePicture: fullImageUrl
             });
         }
@@ -408,8 +411,9 @@ exports.updateGroupProfilePicture = async (req, res) => {
         res.json({
             message: 'Group profile picture updated successfully',
             group: {
-                ...group.toObject(),
-                profilePicture: fullImageUrl
+                ...updatedGroup.toObject(),
+                profilePicture: fullImageUrl,
+                isAdmin: true
             }
         });
     } catch (error) {
@@ -418,7 +422,7 @@ exports.updateGroupProfilePicture = async (req, res) => {
     }
 };
 
-// Upload group picture
+// Upload group picture (only admin or members can upload)
 exports.uploadGroupPicture = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -428,10 +432,9 @@ exports.uploadGroupPicture = async (req, res) => {
             return res.status(400).json({ message: 'No file uploaded' });
         }
 
-        // Get current group and check if user is a member/admin
+        // Get current group and check if user is admin
         const group = await Group.findById(groupId);
         if (!group) {
-            // Clean up uploaded file if group not found
             try {
                 await fs.unlink(req.file.path);
             } catch (unlinkError) {
@@ -440,18 +443,16 @@ exports.uploadGroupPicture = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        // Check if user is a member of the group (optional: add admin check)
-        const isMember = group.members.some(member =>
-            member.userId?.toString() === userId || member.toString() === userId
-        );
+        // Check if user is admin
+        const isAdmin = group.creator.toString() === userId;
 
-        if (!isMember) {
+        if (!isAdmin) {
             try {
                 await fs.unlink(req.file.path);
             } catch (unlinkError) {
                 console.error('Error cleaning up uploaded file:', unlinkError);
             }
-            return res.status(403).json({ message: 'You are not a member of this group' });
+            return res.status(403).json({ message: 'Only group admin can update profile picture' });
         }
 
         // Delete old group picture if it exists
@@ -472,14 +473,12 @@ exports.uploadGroupPicture = async (req, res) => {
         const baseUrl = getBaseUrl(req);
         const fullImageUrl = getFullImageUrl(relativePath, baseUrl);
 
-        // Update group in database with both fields for compatibility
         const updatedGroup = await Group.findByIdAndUpdate(
             groupId,
-            {
-                profilePicture: relativePath
-            },
+            { profilePicture: relativePath },
             { new: true }
-        ).populate('members', 'username email profilePicture');
+        ).populate('members', 'username email profilePicture')
+            .populate('creator', 'username email profilePicture');
 
         // Emit socket event for real-time updates
         const io = req.app.get('io');
@@ -501,6 +500,11 @@ exports.uploadGroupPicture = async (req, res) => {
                 name: updatedGroup.name,
                 profilePicture: fullImageUrl,
                 description: updatedGroup.description,
+                isAdmin: true,
+                creator: {
+                    ...updatedGroup.creator.toObject(),
+                    profilePicture: getFullImageUrl(updatedGroup.creator.profilePicture, baseUrl)
+                },
                 members: updatedGroup.members.map(member => ({
                     id: member._id,
                     name: member.username,
@@ -513,7 +517,6 @@ exports.uploadGroupPicture = async (req, res) => {
     } catch (error) {
         console.error('Error uploading group picture:', error);
 
-        // Clean up uploaded file if database operation fails
         if (req.file) {
             try {
                 await fs.unlink(req.file.path);
@@ -526,7 +529,7 @@ exports.uploadGroupPicture = async (req, res) => {
     }
 };
 
-// Remove group picture
+// Remove group picture (only admin)
 exports.removeGroupPicture = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -537,13 +540,11 @@ exports.removeGroupPicture = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        // Check if user is a member of the group
-        const isMember = group.members.some(member =>
-            member.userId?.toString() === userId || member.toString() === userId
-        );
+        // Check if user is admin
+        const isAdmin = group.creator.toString() === userId;
 
-        if (!isMember) {
-            return res.status(403).json({ message: 'You are not a member of this group' });
+        if (!isAdmin) {
+            return res.status(403).json({ message: 'Only group admin can remove profile picture' });
         }
 
         // Delete group picture file if it exists
@@ -559,16 +560,12 @@ exports.removeGroupPicture = async (req, res) => {
             }
         }
 
-        // Remove group picture from database
         const updatedGroup = await Group.findByIdAndUpdate(
             groupId,
-            {
-                $unset: {
-                    profilePicture: 1
-                }
-            },
+            { $unset: { profilePicture: 1 } },
             { new: true }
-        ).populate('members', 'username email profilePicture');
+        ).populate('members', 'username email profilePicture')
+            .populate('creator', 'username email profilePicture');
 
         // Emit socket event
         const io = req.app.get('io');
@@ -589,6 +586,11 @@ exports.removeGroupPicture = async (req, res) => {
                 name: updatedGroup.name,
                 profilePicture: null,
                 description: updatedGroup.description,
+                isAdmin: true,
+                creator: {
+                    ...updatedGroup.creator.toObject(),
+                    profilePicture: getFullImageUrl(updatedGroup.creator.profilePicture, baseUrl)
+                },
                 members: updatedGroup.members.map(member => ({
                     id: member._id,
                     name: member.username,
@@ -603,10 +605,11 @@ exports.removeGroupPicture = async (req, res) => {
     }
 };
 
-// Get group with picture
+// Get group profile
 exports.getGroupProfile = async (req, res) => {
     try {
         const { groupId } = req.params;
+        const currentUserId = req.user?.id;
 
         const group = await Group.findById(groupId)
             .populate('members', 'username email profilePicture about phone')
@@ -619,12 +622,14 @@ exports.getGroupProfile = async (req, res) => {
         const baseUrl = getBaseUrl(req);
         const groupPicture = group.profilePicture;
         const fullImageUrl = getFullImageUrl(groupPicture, baseUrl);
+        const isAdmin = currentUserId ? group.creator._id.toString() === currentUserId.toString() : false;
 
         res.json({
             id: group._id,
             name: group.name,
             description: group.description,
             profilePicture: fullImageUrl,
+            isAdmin,
             creator: {
                 id: group.creator._id,
                 name: group.creator.username,
@@ -647,6 +652,7 @@ exports.getGroupProfile = async (req, res) => {
     }
 };
 
+// Update group (only admin)
 exports.updateGroup = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -658,14 +664,11 @@ exports.updateGroup = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        // Check if user is a member or creator of the group
-        const isMember = group.members.some(member =>
-            member.userId?.toString() === userId || member.toString() === userId
-        );
-        const isCreator = group.creator.toString() === userId;
+        // Only admin can update group
+        const isAdmin = group.creator.toString() === userId;
 
-        if (!isMember && !isCreator) {
-            return res.status(403).json({ message: 'You are not authorized to update this group' });
+        if (!isAdmin) {
+            return res.status(403).json({ message: 'Only group admin can update group details' });
         }
 
         // Update group fields
@@ -692,7 +695,8 @@ exports.updateGroup = async (req, res) => {
             members: updatedGroup.members.map(member => ({
                 ...member.toObject(),
                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
-            }))
+            })),
+            isAdmin: true
         };
 
         // Emit socket event for real-time updates
