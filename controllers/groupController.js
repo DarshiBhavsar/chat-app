@@ -698,15 +698,15 @@ exports.getGroupProfile = async (req, res) => {
             name: group.name,
             description: group.description,
             profilePicture: fullImageUrl,
-            creator: {
+            creator: group.creator ? {
                 id: group.creator._id,
                 name: group.creator.username,
                 email: group.creator.email,
                 profilePicture: getFullImageUrl(group.creator.profilePicture, baseUrl)
-            },
+            } : null,
             members: group.members.map(member => ({
                 id: member._id,
-                name: member.username,
+                username: member.username,
                 email: member.email,
                 about: member.about,
                 phone: member.phone,
@@ -719,6 +719,7 @@ exports.getGroupProfile = async (req, res) => {
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
+
 
 exports.updateGroup = async (req, res) => {
     try {
