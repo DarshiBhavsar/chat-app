@@ -309,6 +309,73 @@ exports.addMemberToGroup = async (req, res) => {
 };
 
 // Remove member from group
+// exports.removeMemberFromGroup = async (req, res) => {
+//     try {
+//         const { groupId } = req.params;
+//         const { userId } = req.body;
+//         const requesterId = req.user.id;
+
+//         const group = await Group.findById(groupId);
+
+//         if (!group) {
+//             return res.status(404).json({ message: 'Group not found' });
+//         }
+
+//         if (group.creator.toString() !== requesterId && userId !== requesterId) {
+//             return res.status(403).json({ message: 'Not authorized to remove this member' });
+//         }
+
+//         const updatedGroup = await Group.findByIdAndUpdate(
+//             groupId,
+//             { $pull: { members: userId } },
+//             { new: true }
+//         ).populate('members', 'username email profilePicture')
+//             .populate('creator', 'username email profilePicture');
+
+//         if (updatedGroup.members.length === 0) {
+
+//             if (group.profilePicture) {
+//                 try {
+//                     const filename = path.basename(group.profilePicture);
+//                     const imagePath = path.join(__dirname, '..', 'uploads', filename);
+//                     await fs.unlink(imagePath);
+//                 } catch (error) {
+//                     console.log('Group image deletion failed:', error.message);
+//                 }
+//             }
+
+//             await Group.findByIdAndDelete(groupId);
+//             return res.json({
+//                 message: 'Member removed and group deleted (was empty)',
+//                 deleted: true
+//             });
+//         }
+
+//         const baseUrl = getBaseUrl(req);
+
+//         const responseGroup = {
+//             ...updatedGroup.toObject(),
+//             profilePicture: getFullImageUrl(updatedGroup.profilePicture, baseUrl),
+//             creator: {
+//                 ...updatedGroup.creator.toObject(),
+//                 profilePicture: getFullImageUrl(updatedGroup.creator.profilePicture, baseUrl)
+//             },
+//             members: updatedGroup.members.map(member => ({
+//                 ...member.toObject(),
+//                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
+//             }))
+//         };
+
+//         res.json({
+//             message: 'Member removed successfully',
+//             group: responseGroup
+//         });
+//     } catch (error) {
+//         console.error('Error removing member from group:', error);
+//         res.status(500).json({ message: 'Server Error', error: error.message });
+//     }
+// };
+// Remove member from group
 exports.removeMemberFromGroup = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -321,9 +388,14 @@ exports.removeMemberFromGroup = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        // Check if requester is the group creator or removing themselves
-        if (group.creator.toString() !== requesterId && userId !== requesterId) {
-            return res.status(403).json({ message: 'Not authorized to remove this member' });
+        // Check if requester is the group creator (admin)
+        if (group.creator.toString() !== requesterId) {
+            return res.status(403).json({ message: 'Only group admin can remove members' });
+        }
+
+        // Don't allow admin to remove themselves using this endpoint
+        if (userId === requesterId) {
+            return res.status(400).json({ message: 'Admin cannot remove themselves. Use leave group instead.' });
         }
 
         const updatedGroup = await Group.findByIdAndUpdate(
@@ -377,6 +449,7 @@ exports.removeMemberFromGroup = async (req, res) => {
         res.status(500).json({ message: 'Server Error', error: error.message });
     }
 };
+
 
 exports.updateGroupProfilePicture = async (req, res) => {
     try {
