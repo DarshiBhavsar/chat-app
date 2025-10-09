@@ -2,6 +2,35 @@ const Group = require('../models/group');
 const fs = require('fs').promises;
 const path = require('path');
 
+// Helper function to clean up orphaned groups (groups with null creators)
+const cleanupOrphanedGroups = async () => {
+    try {
+        const orphanedGroups = await Group.find({ creator: null });
+
+        for (const group of orphanedGroups) {
+            // Delete group profile picture if it exists
+            if (group.profilePicture) {
+                try {
+                    const filename = path.basename(group.profilePicture);
+                    const imagePath = path.join(__dirname, '..', 'uploads', filename);
+                    await fs.unlink(imagePath);
+                } catch (error) {
+                    console.log('Failed to delete orphaned group image:', error.message);
+                }
+            }
+
+            // Delete the group
+            await Group.findByIdAndDelete(group._id);
+            console.log(`Deleted orphaned group: ${group.name} (${group._id})`);
+        }
+
+        return orphanedGroups.length;
+    } catch (error) {
+        console.error('Error cleaning up orphaned groups:', error);
+        return 0;
+    }
+};
+
 // Helper function to get base URL
 const getBaseUrl = (req) => {
     return `${req.protocol}://${req.get('host')}`;
@@ -24,13 +53,19 @@ const processUser = (user, baseUrl) => {
 
 // Helper function to safely process group data with admin info
 const processGroupData = (group, baseUrl, currentUserId = null) => {
-    const creator = processUser(group.creator, baseUrl);
+    // Safely handle null creator
+    const creator = group.creator ? processUser(group.creator, baseUrl) : null;
+
+    // Filter out null members and process valid ones
     const members = group.members
-        .filter(member => member !== null)
+        .filter(member => member !== null && member !== undefined)
         .map(member => processUser(member, baseUrl))
         .filter(member => member !== null);
 
-    const isAdmin = currentUserId ? group.creator._id.toString() === currentUserId.toString() : false;
+    // Safely check admin status
+    const isAdmin = currentUserId && group.creator && group.creator._id
+        ? group.creator._id.toString() === currentUserId.toString()
+        : false;
 
     return {
         ...group.toObject(),
@@ -91,10 +126,14 @@ exports.getAllGroups = async (req, res) => {
 
         const baseUrl = getBaseUrl(req);
         const currentUserId = req.user?.id;
-        const groupsWithFullUrls = groups.map(group => processGroupData(group, baseUrl, currentUserId));
+
+        // Filter out groups with null creators
+        const validGroups = groups.filter(group => group.creator !== null);
+        const groupsWithFullUrls = validGroups.map(group => processGroupData(group, baseUrl, currentUserId));
 
         res.json(groupsWithFullUrls);
     } catch (error) {
+        console.error('Error in getAllGroups:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
@@ -118,10 +157,14 @@ exports.getUserGroups = async (req, res) => {
             .populate('members', 'username email profilePicture');
 
         const baseUrl = getBaseUrl(req);
-        const groupsWithFullUrls = myGroups.map(group => processGroupData(group, baseUrl, userId));
+
+        // Filter out groups with null creators and process them safely
+        const validGroups = myGroups.filter(group => group.creator !== null);
+        const groupsWithFullUrls = validGroups.map(group => processGroupData(group, baseUrl, userId));
 
         res.json(groupsWithFullUrls);
     } catch (error) {
+        console.error('Error in getUserGroups:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
