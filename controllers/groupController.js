@@ -22,7 +22,7 @@ const processUser = (user, baseUrl) => {
     };
 };
 
-// Helper function to safely process group data
+// CRITICAL FIX: Enhanced processGroupData with proper admin detection
 const processGroupData = (group, baseUrl, currentUserId = null) => {
     const creator = processUser(group.creator, baseUrl);
     const members = group.members
@@ -30,8 +30,16 @@ const processGroupData = (group, baseUrl, currentUserId = null) => {
         .map(member => processUser(member, baseUrl))
         .filter(member => member !== null);
 
-    // CRITICAL: Determine if current user is admin
-    const isAdmin = currentUserId ? group.creator._id.toString() === currentUserId.toString() : false;
+    // CRITICAL: Determine if current user is admin (creator)
+    const creatorId = group.creator?._id?.toString() || group.creator?.toString();
+    const isAdmin = currentUserId ? creatorId === currentUserId.toString() : false;
+
+    console.log('🔍 Admin Check:', {
+        creatorId,
+        currentUserId,
+        isAdmin,
+        groupName: group.name
+    });
 
     return {
         ...group.toObject(),
@@ -39,7 +47,8 @@ const processGroupData = (group, baseUrl, currentUserId = null) => {
         creator,
         members,
         isAdmin, // Add admin status to response
-        adminId: group.creator._id.toString() // Explicitly include admin ID
+        adminId: creatorId, // Explicitly include admin ID
+        creatorId: creatorId // Also add as creatorId for clarity
     };
 };
 
@@ -77,8 +86,15 @@ exports.createGroup = async (req, res) => {
                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
             })),
             isAdmin: true, // Creator is always admin
-            adminId: createdBy
+            adminId: createdBy,
+            creatorId: createdBy
         };
+
+        console.log('✅ Group created:', {
+            name: responseGroup.name,
+            creator: createdBy,
+            isAdmin: responseGroup.isAdmin
+        });
 
         res.status(201).json(responseGroup);
     } catch (error) {
@@ -104,7 +120,7 @@ exports.getAllGroups = async (req, res) => {
     }
 };
 
-// Get groups that user is a creator or member of
+// CRITICAL FIX: Get groups with proper admin status
 exports.getUserGroups = async (req, res) => {
     try {
         const userId = req.params.userId;
@@ -124,6 +140,12 @@ exports.getUserGroups = async (req, res) => {
 
         const baseUrl = getBaseUrl(req);
         const groupsWithFullUrls = myGroups.map(group => processGroupData(group, baseUrl, userId));
+
+        console.log('📊 User groups loaded:', {
+            userId,
+            groupCount: groupsWithFullUrls.length,
+            adminGroups: groupsWithFullUrls.filter(g => g.isAdmin).length
+        });
 
         res.json(groupsWithFullUrls);
     } catch (error) {
@@ -165,7 +187,7 @@ exports.addUserToGroup = async (req, res) => {
     }
 };
 
-// UPDATED: Remove user from group - ONLY ADMIN CAN DO THIS
+// CRITICAL FIX: Remove user from group - ONLY ADMIN CAN DO THIS
 exports.removeUserFromGroup = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -179,7 +201,16 @@ exports.removeUserFromGroup = async (req, res) => {
         }
 
         // CRITICAL: Check if requester is the admin (creator)
-        const isAdmin = group.creator.toString() === requesterId;
+        const creatorId = group.creator?.toString();
+        const isAdmin = creatorId === requesterId;
+
+        console.log('🔍 Remove member check:', {
+            groupId,
+            requesterId,
+            creatorId,
+            isAdmin,
+            userToRemove: userId
+        });
 
         // CRITICAL: Allow removal if:
         // 1. Requester is admin (can remove anyone except themselves)
@@ -234,6 +265,11 @@ exports.removeUserFromGroup = async (req, res) => {
         const baseUrl = getBaseUrl(req);
         const responseGroup = processGroupData(updatedGroup, baseUrl, requesterId);
 
+        console.log('✅ Member removed successfully:', {
+            removedUser: userId,
+            remainingMembers: responseGroup.members.length
+        });
+
         res.json({
             message: 'Member removed successfully',
             group: responseGroup
@@ -258,7 +294,8 @@ exports.leaveGroup = async (req, res) => {
         }
 
         // CRITICAL: Check if user is admin
-        const isAdmin = group.creator.toString() === userId;
+        const creatorId = group.creator?.toString();
+        const isAdmin = creatorId === userId;
 
         if (isAdmin) {
             return res.status(400).json({
@@ -326,7 +363,8 @@ exports.addMemberToGroup = async (req, res) => {
         }
 
         // CRITICAL: Check if requester is admin (creator)
-        const isAdmin = group.creator.toString() === requesterId;
+        const creatorId = group.creator?.toString();
+        const isAdmin = creatorId === requesterId;
 
         if (!isAdmin) {
             return res.status(403).json({
@@ -357,7 +395,7 @@ exports.addMemberToGroup = async (req, res) => {
     }
 };
 
-// UPDATED: Remove member from group - DUPLICATE METHOD (keeping for backward compatibility)
+// Remove member from group - DUPLICATE METHOD (keeping for backward compatibility)
 exports.removeMemberFromGroup = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -371,7 +409,8 @@ exports.removeMemberFromGroup = async (req, res) => {
         }
 
         // CRITICAL: Check if requester is admin
-        const isAdmin = group.creator.toString() === requesterId;
+        const creatorId = group.creator?.toString();
+        const isAdmin = creatorId === requesterId;
 
         // Allow if: admin removing someone OR user removing themselves
         if (!isAdmin && userId !== requesterId) {
@@ -450,7 +489,8 @@ exports.uploadGroupPicture = async (req, res) => {
         }
 
         // Check if user is admin or member
-        const isAdmin = group.creator.toString() === userId;
+        const creatorId = group.creator?.toString();
+        const isAdmin = creatorId === userId;
         const isMember = group.members.some(member =>
             member.userId?.toString() === userId || member.toString() === userId
         );
@@ -537,7 +577,8 @@ exports.removeGroupPicture = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        const isAdmin = group.creator.toString() === userId;
+        const creatorId = group.creator?.toString();
+        const isAdmin = creatorId === userId;
         const isMember = group.members.some(member =>
             member.userId?.toString() === userId || member.toString() === userId
         );
@@ -590,7 +631,7 @@ exports.removeGroupPicture = async (req, res) => {
     }
 };
 
-// Get group profile
+// CRITICAL FIX: Get group profile with proper admin status
 exports.getGroupProfile = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -605,7 +646,15 @@ exports.getGroupProfile = async (req, res) => {
         }
 
         const baseUrl = getBaseUrl(req);
-        const isAdmin = currentUserId ? group.creator._id.toString() === currentUserId.toString() : false;
+        const creatorId = group.creator?._id?.toString();
+        const isAdmin = currentUserId ? creatorId === currentUserId.toString() : false;
+
+        console.log('📋 Group profile requested:', {
+            groupId,
+            currentUserId,
+            creatorId,
+            isAdmin
+        });
 
         res.json({
             id: group._id,
@@ -628,7 +677,8 @@ exports.getGroupProfile = async (req, res) => {
             })),
             createdAt: group.createdAt,
             isAdmin, // Include admin status
-            adminId: group.creator._id.toString()
+            adminId: creatorId,
+            creatorId: creatorId
         });
     } catch (error) {
         console.error('Error fetching group profile:', error);
@@ -649,7 +699,8 @@ exports.updateGroup = async (req, res) => {
         }
 
         // CRITICAL: Only admin can update group details
-        const isAdmin = group.creator.toString() === userId;
+        const creatorId = group.creator?.toString();
+        const isAdmin = creatorId === userId;
 
         if (!isAdmin) {
             return res.status(403).json({
