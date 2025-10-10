@@ -632,6 +632,60 @@ exports.removeGroupPicture = async (req, res) => {
 };
 
 // CRITICAL FIX: Get group profile with proper admin status
+// exports.getGroupProfile = async (req, res) => {
+//     try {
+//         const { groupId } = req.params;
+//         const currentUserId = req.user?.id;
+
+//         const group = await Group.findById(groupId)
+//             .populate('members', 'username email profilePicture about phone')
+//             .populate('creator', 'username email profilePicture');
+
+//         if (!group) {
+//             return res.status(404).json({ message: 'Group not found' });
+//         }
+
+//         const baseUrl = getBaseUrl(req);
+//         const creatorId = group.creator?._id?.toString();
+//         const isAdmin = currentUserId ? creatorId === currentUserId.toString() : false;
+
+//         console.log('📋 Group profile requested:', {
+//             groupId,
+//             currentUserId,
+//             creatorId,
+//             isAdmin
+//         });
+
+//         res.json({
+//             id: group._id,
+//             name: group.name,
+//             description: group.description,
+//             profilePicture: getFullImageUrl(group.profilePicture, baseUrl),
+//             creator: {
+//                 id: group.creator._id,
+//                 name: group.creator.username,
+//                 email: group.creator.email,
+//                 profilePicture: getFullImageUrl(group.creator.profilePicture, baseUrl)
+//             },
+//             members: group.members.map(member => ({
+//                 id: member._id,
+//                 name: member.username,
+//                 email: member.email,
+//                 about: member.about,
+//                 phone: member.phone,
+//                 profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
+//             })),
+//             createdAt: group.createdAt,
+//             isAdmin,
+//             adminId: creatorId,
+//             creatorId: creatorId
+//         });
+//     } catch (error) {
+//         console.error('Error fetching group profile:', error);
+//         res.status(500).json({ message: 'Server Error', error: error.message });
+//     }
+// };
+
 exports.getGroupProfile = async (req, res) => {
     try {
         const { groupId } = req.params;
@@ -645,7 +699,14 @@ exports.getGroupProfile = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        const baseUrl = getBaseUrl(req);
+        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        const getFullImageUrl = (relativePath) => {
+            if (!relativePath) return null;
+            if (relativePath.startsWith('http')) return relativePath;
+            return `${baseUrl}${relativePath}`;
+        };
+
+        // CRITICAL: Determine admin status
         const creatorId = group.creator?._id?.toString();
         const isAdmin = currentUserId ? creatorId === currentUserId.toString() : false;
 
@@ -660,23 +721,24 @@ exports.getGroupProfile = async (req, res) => {
             id: group._id,
             name: group.name,
             description: group.description,
-            profilePicture: getFullImageUrl(group.profilePicture, baseUrl),
+            profilePicture: getFullImageUrl(group.profilePicture),
             creator: {
                 id: group.creator._id,
                 name: group.creator.username,
                 email: group.creator.email,
-                profilePicture: getFullImageUrl(group.creator.profilePicture, baseUrl)
+                profilePicture: getFullImageUrl(group.creator.profilePicture)
             },
             members: group.members.map(member => ({
                 id: member._id,
-                name: member.username,
+                _id: member._id,
+                username: member.username,
                 email: member.email,
                 about: member.about,
                 phone: member.phone,
-                profilePicture: getFullImageUrl(member.profilePicture, baseUrl)
+                profilePicture: getFullImageUrl(member.profilePicture)
             })),
             createdAt: group.createdAt,
-            isAdmin, // Include admin status
+            isAdmin,
             adminId: creatorId,
             creatorId: creatorId
         });
