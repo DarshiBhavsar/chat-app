@@ -76,6 +76,8 @@ router.put('/:groupId/profile-picture', verifyToken, (req, res, next) => {
     });
 });
 
+router.get('/profile/:groupId', verifyToken, groupController.getGroupProfile);
+
 // Update group
 router.put('/update/:groupId', verifyToken, groupController.updateGroup);
 
