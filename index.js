@@ -843,12 +843,7 @@ io.on('connection', socket => {
     });
 
     socket.on('call-answer', async ({ to, answer }) => {
-        console.log(`📞 Call answer from socket ${socket.id} to ${to}`);
-
-        const user = onlineUsers.get(socket.id);
-        if (user) {
-            await updateLastSeen(user.id);
-        }
+        console.log(`📞 Relaying answer to ${to}`);
 
         const recipientSocketId = userSocketMap.get(to);
         if (recipientSocketId) {
@@ -856,7 +851,9 @@ io.on('connection', socket => {
                 from: onlineUsers.get(socket.id)?.id,
                 answer
             });
-            console.log(`📞 Call answer relayed to ${to} (Socket: ${recipientSocketId})`);
+            console.log(`✅ Answer relayed successfully`);
+        } else {
+            console.log(`❌ Recipient ${to} not found`);
         }
     });
 
