@@ -823,12 +823,18 @@ io.on('connection', socket => {
     // Individual call handlers (existing) - with last seen updates
     socket.on('call-request', async ({ to, from, fromName, type, offer }) => {
         console.log(`📞 Call request from ${fromName} to ${to} (Type: ${type})`);
+        console.log('📋 Offer SDP:', JSON.stringify(offer, null, 2));
 
-        // Update caller's last seen
         await updateLastSeen(from);
 
         const recipientSocketId = userSocketMap.get(to);
         if (recipientSocketId) {
+            if (type === 'video' && !offer.sdp.includes('m=video')) {
+                console.warn('⚠️ Offer SDP missing video media section');
+                socket.emit('call-failed', { reason: 'Invalid offer - missing video track', message: 'Please check camera permissions.' });
+                return;
+            }
+
             io.to(recipientSocketId).emit('call-request', {
                 from,
                 fromName,
@@ -844,9 +850,18 @@ io.on('connection', socket => {
 
     socket.on('call-answer', async ({ to, answer }) => {
         console.log(`📞 Relaying answer to ${to}`);
+        console.log('📋 Answer SDP:', JSON.stringify(answer, null, 2));
 
         const recipientSocketId = userSocketMap.get(to);
         if (recipientSocketId) {
+            const callerSocketId = Array.from(userSocketMap.entries()).find(([_, id]) => id === recipientSocketId)?.[0];
+            const callerType = onlineUsers.get(callerSocketId)?.callType || 'video';
+            if (callerType === 'video' && !answer.sdp.includes('m=video')) {
+                console.warn('⚠️ Answer SDP missing video media section');
+                io.to(recipientSocketId).emit('call-failed', { reason: 'Invalid answer - missing video track', message: 'Please check camera permissions.' });
+                return;
+            }
+
             io.to(recipientSocketId).emit('call-answer', {
                 from: onlineUsers.get(socket.id)?.id,
                 answer
@@ -910,6 +925,7 @@ io.on('connection', socket => {
 
     socket.on('ice-candidate', ({ to, candidate }) => {
         console.log(`🧊 ICE candidate from socket ${socket.id} to ${to}`);
+        console.log('🧊 Candidate:', JSON.stringify(candidate, null, 2));
 
         const recipientSocketId = userSocketMap.get(to);
         if (recipientSocketId) {
