@@ -206,9 +206,6 @@ io.on('connection', socket => {
                 lastSeenText: 'Online'
             });
 
-
-
-
             // CRITICAL FIX: Process undelivered GROUP messages with immediate sender notification
             try {
                 const Message = require('./models/message');
@@ -822,9 +819,8 @@ io.on('connection', socket => {
 
     // Individual call handlers (existing) - with last seen updates
     socket.on('call-request', async ({ to, from, fromName, type, offer }) => {
-        console.log(`📞 Call request from ${fromName} to ${to} (Type: ${type})`);
+        console.log(`📞 ${fromName} calling ${to} (${type})`);
 
-        // Update caller's last seen
         await updateLastSeen(from);
 
         const recipientSocketId = userSocketMap.get(to);
@@ -835,25 +831,27 @@ io.on('connection', socket => {
                 type,
                 offer
             });
-            console.log(`📞 Call request relayed to ${to} (Socket: ${recipientSocketId})`);
+            console.log(`✅ Call request sent`);
         } else {
             socket.emit('call-failed', { reason: 'User is offline' });
-            console.log(`📞 Call request failed - recipient ${to} is offline`);
+            console.log(`❌ User offline`);
         }
     });
 
     socket.on('call-answer', async ({ to, answer }) => {
-        console.log(`📞 Relaying answer to ${to}`);
+        console.log(`📞 Sending answer to ${to}`);
 
         const recipientSocketId = userSocketMap.get(to);
         if (recipientSocketId) {
+            const answererUser = onlineUsers.get(socket.id);
+
             io.to(recipientSocketId).emit('call-answer', {
-                from: onlineUsers.get(socket.id)?.id,
+                from: answererUser?.id,
                 answer
             });
-            console.log(`✅ Answer relayed successfully`);
+            console.log(`✅ Answer sent`);
         } else {
-            console.log(`❌ Recipient ${to} not found`);
+            console.log(`❌ Recipient not found`);
         }
     });
 
@@ -1552,7 +1550,6 @@ io.on('connection', socket => {
         }
     });
 
-
     // 3. STATUS VIEWED - When a user views a single status
     socket.on('status_viewed', async ({ statusId, viewerId, updatedStatus }) => {
         try {
@@ -1587,7 +1584,6 @@ io.on('connection', socket => {
             });
         }
     });
-
 
     // 4. STATUS BULK VIEWED - When a user views multiple statuses at once
     socket.on('status_bulk_viewed', async ({ statusIds, viewerId, updatedStatuses }) => {
@@ -1883,7 +1879,6 @@ io.on('connection', socket => {
             console.error('❌ Error handling group message read:', error);
         }
     });
-
 
     // Listen for message read events from clients
     socket.on('message-read', async (data) => {
