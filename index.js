@@ -33,7 +33,8 @@ const io = new Server(server, {
     cors: {
         origin: 'https://chat-application-reactjs-nodejs.netlify.app',
         // origin: 'http://localhost:5173',
-        pingTimeout: 10000,
+        pingTimeout: 20000,    // 20 seconds
+        pingInterval: 10000,
         methods: ['GET', 'POST']
     }
 });
@@ -65,7 +66,7 @@ const TYPING_TIMEOUT_DURATION = 6000;
 const updateLastSeen = async (userId) => {
     const timestamp = new Date();
     userLastSeen.set(userId, timestamp);
-    userHeartbeats.set(userId, timestamp); // Track heartbeat
+    userHeartbeats.set(userId, timestamp);
 
     try {
         await User.findByIdAndUpdate(userId, {
@@ -73,18 +74,15 @@ const updateLastSeen = async (userId) => {
             isOnline: true
         });
     } catch (error) {
-        console.error('Error updating last seen in database:', error);
+        console.error('Error updating last seen in DB:', error);
     }
 };
 
 const isUserTrulyOnline = (userId) => {
     const socketId = userSocketMap.get(userId);
     const hasSocket = socketId && onlineUsers.has(socketId);
-
-    // Check if heartbeat is recent (within last 45 seconds)
     const lastHeartbeat = userHeartbeats.get(userId);
     const heartbeatRecent = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 45000);
-
     return hasSocket && heartbeatRecent;
 };
 
@@ -92,28 +90,47 @@ const isUserTrulyOnline = (userId) => {
 const setUserOffline = async (userId) => {
     const timestamp = new Date();
     userLastSeen.set(userId, timestamp);
+    userHeartbeats.delete(userId);
 
     try {
-        await User.findByIdAndUpdate(userId, {
+        const user = await User.findByIdAndUpdate(userId, {
             lastSeen: timestamp,
             isOnline: false
+        }).select('lastSeen');
+
+        const dbLastSeen = user?.lastSeen || timestamp;
+
+        io.emit('user-status-updated', {
+            userId,
+            isOnline: false,
+            lastSeen: dbLastSeen,
+            lastSeenText: formatLastSeen(dbLastSeen)
         });
     } catch (error) {
-        console.error('Error setting user offline in database:', error);
+        console.error('Error setting user offline:', error);
     }
 };
 
 // Helper function to get user's last seen info
-const getUserLastSeen = (userId) => {
-    return userLastSeen.get(userId) || null;
+const getUserLastSeen = async (userId) => {
+    const inMemory = userLastSeen.get(userId);
+    if (inMemory) return inMemory;
+
+    try {
+        const user = await User.findById(userId).select('lastSeen');
+        return user?.lastSeen || null;
+    } catch (error) {
+        return null;
+    }
 };
 
 // Helper function to format last seen text
 const formatLastSeen = (lastSeenTime) => {
-    if (!lastSeenTime) return 'Never';
+    if (!lastSeenTime || isNaN(new Date(lastSeenTime).getTime())) return 'Never';
 
     const now = new Date();
-    const diffMs = now - lastSeenTime;
+    const last = new Date(lastSeenTime);
+    const diffMs = now - last;
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -121,9 +138,21 @@ const formatLastSeen = (lastSeenTime) => {
     if (diffMinutes < 1) return 'Just now';
     if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`;
     if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+
+    // Yesterday check
+    const isYesterday =
+        now.getDate() === last.getDate() + 1 &&
+        now.getMonth() === last.getMonth() &&
+        now.getFullYear() === last.getFullYear();
+    if (isYesterday) return 'Yesterday';
+
     if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 
-    return lastSeenTime.toLocaleDateString();
+    return last.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+    });
 };
 
 const getUserFriends = async (userId) => {
@@ -153,12 +182,9 @@ app.get('/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
         const user = await User.findById(userId).select('lastSeen isOnline');
+        if (!user) return res.status(404).json({ error: 'User not found' });
 
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        const isOnline = onlineUsers.has(userSocketMap.get(userId));
+        const isOnline = isUserTrulyOnline(userId);
         const lastSeen = isOnline ? new Date() : (user.lastSeen || null);
 
         res.json({
@@ -171,7 +197,6 @@ app.get('/api/users/:userId/last-seen', async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
-
 io.on('connection', socket => {
     console.log(`✅ Socket connected: ${socket.id}`);
 
@@ -295,7 +320,8 @@ io.on('connection', socket => {
             io.emit('user-status-updated', {
                 userId,
                 isOnline: true,
-                lastSeen: new Date()
+                lastSeen: new Date(),
+                lastSeenText: 'Online'
             });
 
             console.log(`💓 Heartbeat received from user ${userId}`);
