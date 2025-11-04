@@ -33,8 +33,7 @@ const io = new Server(server, {
     cors: {
         origin: 'https://chat-application-reactjs-nodejs.netlify.app',
         // origin: 'http://localhost:5173',
-        pingTimeout: 20000,    // 20 seconds
-        pingInterval: 10000,
+        pingTimeout: 10000,
         methods: ['GET', 'POST']
     }
 });
