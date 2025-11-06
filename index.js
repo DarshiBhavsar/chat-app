@@ -193,7 +193,7 @@ app.use('/videos', express.static(path.join(__dirname, 'videos')));
 app.use('/story', express.static(path.join(__dirname, 'story')));
 
 // Add endpoint to get user's last seen
-app.get('/api/users/:userId/last-seen', async (req, res) => {
+app.get('https://socket-application-react-nodejs.onrender.com/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
         const user = await User.findById(userId).select('lastSeen isOnline');
