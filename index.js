@@ -91,28 +91,22 @@ const setUserOffline = async (userId) => {
     userHeartbeats.delete(userId);
 
     try {
-        const user = await User.findByIdAndUpdate(userId, {
-            lastSeen: timestamp,
-            isOnline: false
-        }).select('lastSeen');
+        const user = await User.findByIdAndUpdate(
+            userId,
+            { lastSeen: timestamp, isOnline: false },
+            { new: true }
+        ).select('lastSeen isOnline');
 
-        const dbLastSeen = user?.lastSeen || timestamp;
-        const lastSeenText = formatLastSeen(dbLastSeen); // Use updated format
+        if (!user) return;
 
+        // Send raw ISO timestamp only
         io.emit('user-status-updated', {
             userId,
             isOnline: false,
-            lastSeen: dbLastSeen,
-            lastSeenText
+            lastSeen: user.lastSeen.toISOString()
         });
 
-        // Also emit to specific listeners
-        io.emit('user-left-broadcast', {
-            userId,
-            isOnline: false,
-            lastSeen: dbLastSeen,
-            lastSeenText
-        });
+        console.log(`📴 User ${userId} offline at ${user.lastSeen.toISOString()}`);
     } catch (error) {
         console.error('Error setting user offline:', error);
     }
@@ -197,32 +191,25 @@ app.use('/story', express.static(path.join(__dirname, 'story')));
 app.get('/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
+        const isOnline = isUserTrulyOnline(userId);
 
-        console.log(`📊 API: Fetching last seen for user ${userId}`);
-
-        const user = await User.findById(userId).select('lastSeen isOnline username');
-
-        if (!user) {
-            console.log(`❌ API: User ${userId} not found`);
-            return res.status(404).json({ error: 'User not found' });
+        if (isOnline) {
+            return res.json({
+                userId,
+                isOnline: true,
+                lastSeen: new Date().toISOString()
+            });
         }
 
-        const isOnline = isUserTrulyOnline(userId);
-        const lastSeen = isOnline ? new Date() : (user.lastSeen || new Date());
-        const lastSeenText = isOnline ? 'Online' : formatLastSeen(lastSeen);
+        const user = await User.findById(userId).select('lastSeen');
+        if (!user) return res.status(404).json({ error: 'User not found' });
 
-        const response = {
+        res.json({
             userId,
-            isOnline,
-            lastSeen,
-            lastSeenText
-        };
-
-        console.log(`✅ API: Sending last seen data:`, response);
-
-        res.json(response);
+            isOnline: false,
+            lastSeen: (user.lastSeen || new Date()).toISOString()
+        });
     } catch (error) {
-        console.error('❌ API: Error fetching last seen:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -257,7 +244,7 @@ io.on('connection', socket => {
             io.emit('user-status-updated', {
                 userId: user.id,
                 isOnline: true,
-                lastSeen: new Date(),
+                lastSeen: new Date().toISOString(),
                 lastSeenText: 'Online'
             });
 
@@ -350,7 +337,7 @@ io.on('connection', socket => {
             io.emit('user-status-updated', {
                 userId,
                 isOnline: true,
-                lastSeen: new Date(),
+                lastSeen: new Date().toISOString(),
                 lastSeenText: 'Online'
             });
 
@@ -2002,7 +1989,7 @@ io.on('connection', socket => {
                         userId: user.id,
                         isOnline: false,
                         lastSeen,
-                        lastSeenText: formatLastSeen(lastSeen)
+                        lastSeenText: timestamp.toISOString()
                     });
 
                     io.emit('online-users', Array.from(onlineUsers.values()));
