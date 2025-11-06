@@ -133,41 +133,41 @@ const getUserLastSeen = async (userId) => {
 
 // Helper function to format last seen text
 const formatLastSeen = (lastSeenTime) => {
-    if (!lastSeenTime || isNaN(new Date(lastSeenTime).getTime())) return 'Never';
+    if (!lastSeenTime) return 'Never';
+
+    const last = new Date(lastSeenTime);
+    if (isNaN(last.getTime())) return 'Never';
 
     const now = new Date();
-    const last = new Date(lastSeenTime);
+    // Convert to IST (+5:30) for consistent comparison
+    const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
+    const nowIST = new Date(now.getTime() + istOffset);
+    const lastIST = new Date(last.getTime() + istOffset);
+
+    const isToday = nowIST.toDateString() === lastIST.toDateString();
+    const isYesterday =
+        nowIST.getDate() === lastIST.getDate() + 1 &&
+        nowIST.getMonth() === lastIST.getMonth() &&
+        nowIST.getFullYear() === lastIST.getFullYear();
+
+    if (isToday) {
+        return `Today at ${lastIST.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+    }
+    if (isYesterday) {
+        return `Yesterday at ${lastIST.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+    }
+
     const diffMs = now - last;
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
     if (diffMinutes < 1) return 'Just now';
-    if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
 
-    // Check if today
-    const isToday = now.toDateString() === last.toDateString();
-    if (isToday) {
-        return `Today at ${last.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-    }
-
-    // Check if yesterday
-    const isYesterday =
-        now.getDate() === last.getDate() + 1 &&
-        now.getMonth() === last.getMonth() &&
-        now.getFullYear() === last.getFullYear();
-    if (isYesterday) {
-        return `Yesterday at ${last.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-    }
-
-    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-
-    return last.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-    });
+    return last.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
 const getUserFriends = async (userId) => {
