@@ -97,12 +97,21 @@ const setUserOffline = async (userId) => {
         }).select('lastSeen');
 
         const dbLastSeen = user?.lastSeen || timestamp;
+        const lastSeenText = formatLastSeen(dbLastSeen); // Use updated format
 
         io.emit('user-status-updated', {
             userId,
             isOnline: false,
             lastSeen: dbLastSeen,
-            lastSeenText: formatLastSeen(dbLastSeen)
+            lastSeenText
+        });
+
+        // Also emit to specific listeners
+        io.emit('user-left-broadcast', {
+            userId,
+            isOnline: false,
+            lastSeen: dbLastSeen,
+            lastSeenText
         });
     } catch (error) {
         console.error('Error setting user offline:', error);
@@ -137,12 +146,20 @@ const formatLastSeen = (lastSeenTime) => {
     if (diffMinutes < 60) return `${diffMinutes} minute${diffMinutes > 1 ? 's' : ''} ago`;
     if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
 
-    // Yesterday check
+    // Check if today
+    const isToday = now.toDateString() === last.toDateString();
+    if (isToday) {
+        return `Today at ${last.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    }
+
+    // Check if yesterday
     const isYesterday =
         now.getDate() === last.getDate() + 1 &&
         now.getMonth() === last.getMonth() &&
         now.getFullYear() === last.getFullYear();
-    if (isYesterday) return 'Yesterday';
+    if (isYesterday) {
+        return `Yesterday at ${last.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+    }
 
     if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
 
@@ -184,17 +201,19 @@ app.get('/api/users/:userId/last-seen', async (req, res) => {
 
         const isOnline = isUserTrulyOnline(userId);
         const lastSeen = isOnline ? new Date() : (user.lastSeen || null);
+        const lastSeenText = isOnline ? 'Online' : formatLastSeen(lastSeen);
 
         res.json({
             userId,
             isOnline,
             lastSeen,
-            lastSeenText: isOnline ? 'Online' : formatLastSeen(lastSeen)
+            lastSeenText
         });
     } catch (error) {
         res.status(500).json({ error: 'Server error' });
     }
 });
+
 io.on('connection', socket => {
     console.log(`✅ Socket connected: ${socket.id}`);
 
