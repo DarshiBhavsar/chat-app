@@ -194,7 +194,7 @@ app.use('/story', express.static(path.join(__dirname, 'story')));
 
 // Add endpoint to get user's last seen
 // CRITICAL FIX: Make sure this endpoint is BEFORE your socket.io handlers
-app.get('/api/users/:userId/last-seen', async (req, res) => {
+app.get('https://socket-application-react-nodejs.onrender.com/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
 
