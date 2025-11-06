@@ -191,25 +191,49 @@ app.use('/story', express.static(path.join(__dirname, 'story')));
 app.get('/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
+
+        console.log(`📊 API: Fetching last seen for user ${userId}`);
+
+        // CRITICAL: Check if user is TRULY online RIGHT NOW
         const isOnline = isUserTrulyOnline(userId);
 
         if (isOnline) {
-            return res.json({
+            // User is online - return current time
+            const response = {
                 userId,
                 isOnline: true,
-                lastSeen: new Date().toISOString()
-            });
+                lastSeen: new Date(),
+                lastSeenText: 'Online'
+            };
+
+            console.log(`✅ API: User ${userId} is ONLINE`);
+            return res.json(response);
         }
 
-        const user = await User.findById(userId).select('lastSeen');
-        if (!user) return res.status(404).json({ error: 'User not found' });
+        // User is offline - fetch from database (most reliable source)
+        const user = await User.findById(userId).select('lastSeen isOnline username');
 
-        res.json({
+        if (!user) {
+            console.log(`❌ API: User ${userId} not found`);
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // CRITICAL: Always use database lastSeen for offline users
+        const lastSeen = user.lastSeen || new Date();
+        const lastSeenText = formatLastSeen(lastSeen);
+
+        const response = {
             userId,
             isOnline: false,
-            lastSeen: (user.lastSeen || new Date()).toISOString()
-        });
+            lastSeen,
+            lastSeenText
+        };
+
+        console.log(`✅ API: User ${userId} is OFFLINE, last seen: ${lastSeenText}`);
+
+        res.json(response);
     } catch (error) {
+        console.error('❌ API: Error fetching last seen:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
