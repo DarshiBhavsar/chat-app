@@ -84,7 +84,6 @@ const isUserTrulyOnline = (userId) => {
     const heartbeatRecent = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 45000);
     return hasSocket && heartbeatRecent;
 };
-
 // Helper function to set user offline
 const setUserOffline = async (userId) => {
     const timestamp = new Date();
