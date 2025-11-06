@@ -193,23 +193,36 @@ app.use('/videos', express.static(path.join(__dirname, 'videos')));
 app.use('/story', express.static(path.join(__dirname, 'story')));
 
 // Add endpoint to get user's last seen
-app.get('https://socket-application-react-nodejs.onrender.com/api/users/:userId/last-seen', async (req, res) => {
+// CRITICAL FIX: Make sure this endpoint is BEFORE your socket.io handlers
+app.get('/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
-        const user = await User.findById(userId).select('lastSeen isOnline');
-        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        console.log(`📊 API: Fetching last seen for user ${userId}`);
+
+        const user = await User.findById(userId).select('lastSeen isOnline username');
+
+        if (!user) {
+            console.log(`❌ API: User ${userId} not found`);
+            return res.status(404).json({ error: 'User not found' });
+        }
 
         const isOnline = isUserTrulyOnline(userId);
-        const lastSeen = isOnline ? new Date() : (user.lastSeen || null);
+        const lastSeen = isOnline ? new Date() : (user.lastSeen || new Date());
         const lastSeenText = isOnline ? 'Online' : formatLastSeen(lastSeen);
 
-        res.json({
+        const response = {
             userId,
             isOnline,
             lastSeen,
             lastSeenText
-        });
+        };
+
+        console.log(`✅ API: Sending last seen data:`, response);
+
+        res.json(response);
     } catch (error) {
+        console.error('❌ API: Error fetching last seen:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
