@@ -23,7 +23,9 @@ const userSchema = new mongoose.Schema(
         about: { type: String, default: '' },
         phone: { type: String, default: '' },
         lastSeen: { type: Date, default: Date.now },
-        isOnline: { type: Boolean, default: false }
+        isOnline: { type: Boolean, default: false },
+        resetPasswordToken: { type: String, default: null },
+        resetPasswordExpires: { type: Date, default: null }
     },
     { timestamps: true }
 );
