@@ -7,13 +7,18 @@ const {
     unblockUser,
     getCurrentUser,
     getBlockedUsers,
-    updateUser
+    updateUser,
+    forgotPassword,
+    resetPassword
+
 } = require('../controllers/authController');
 const verifyToken = require('../middleware/authMiddleware');
 const router = express.Router();
 
 router.post('/register', registerUser);
 router.post('/login', loginUser);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password/:token', resetPassword);
 router.get('/users', verifyToken, getAllUsers);
 router.get('/user/me', verifyToken, getCurrentUser);
 router.post('/block/:userId', verifyToken, blockUser);
