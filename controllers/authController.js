@@ -98,7 +98,7 @@ exports.forgotPassword = async (req, res) => {
             {
                 headers: {
                     'accept': 'application/json',
-                    'x-api-key': process.env.BREVO_API_KEY,  // ← CHANGED FROM 'api-key'
+                    'api-key': process.env.BREVO_API_KEY,  // ← CHANGED FROM 'api-key'
                     'content-type': 'application/json'
                 }
             }
