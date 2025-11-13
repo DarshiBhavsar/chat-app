@@ -1,7 +1,10 @@
+require('dotenv').config();
 const User = require('../models/user');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const path = require('path');
+const nodemailer = require('nodemailer');
+
 
 const emitStatusFeedRefresh = async (io, userId, refreshData) => {
     try {
@@ -52,37 +55,48 @@ exports.loginUser = async (req, res) => {
 exports.forgotPassword = (req, res) => {
     const { email } = req.body;
 
-    User.findOne({ email: email })
+    User.findOne({ email })
         .then(user => {
             if (!user) {
                 return res.send({ Status: 'User not existed' });
             }
 
-            const token = jwt.sign({ id: user._id }, "jwt-secret-key", { expiresIn: '1d' });
+            const token = jwt.sign(
+                { id: user._id },
+                process.env.JWT_SECRET,
+                { expiresIn: '1d' }
+            );
 
-            var transporter = nodemailer.createTransport({
-                service: 'gmail',
+            console.log('SMTP Host:', process.env.SMTP_HOST);
+
+            const transporter = nodemailer.createTransport({
+                host: process.env.SMTP_HOST,
+                port: process.env.SMTP_PORT,
+                secure: true,
                 auth: {
-                    user: '190020107006ait@gmail.com',
-                    pass: 'tvva pkxy ehjl czf'
+                    user: process.env.SMTP_USER,
+                    pass: process.env.SMTP_PASS
                 }
             });
 
-            var mailOptions = {
-                from: '190020107006ait@gmail.com',
+            // ✅ Use sender name from .env file
+            const mailOptions = {
+                from: process.env.EMAIL_FROM, // <— changed this line
                 to: email,
                 subject: 'Reset Password Link',
-                text: `https://socket-application-react-nodejs.onrender.com/api/auth/reset-password/${user._id}/${token}`
+                text: `${process.env.FRONTEND_URL}/reset-password/${user._id}/${token}`
             };
 
             transporter.sendMail(mailOptions, function (error, info) {
                 if (error) {
-                    console.log(error);
-                    return res.send({ Status: 'Error sending email' });
+                    console.error('Email error:', error);  // log actual reason
+                    return res.send({ Status: 'Error sending email', error: error.message });
                 } else {
-                    return res.send({ Status: "Success" });
+                    console.log('Email sent:', info.response);
+                    return res.send({ Status: 'Success' });
                 }
             });
+
         })
         .catch(err => res.json(err));
 };
