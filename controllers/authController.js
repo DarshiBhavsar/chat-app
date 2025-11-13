@@ -68,14 +68,16 @@ exports.forgotPassword = async (req, res) => {
 
         const resetLink = `${process.env.FRONTEND_URL}/reset-password/${token}`;
 
+        const sender = {
+            name: process.env.BREVO_SENDER_NAME || 'AAN Chat',
+            email: process.env.BREVO_SENDER_EMAIL || '190020107006ait@gmail.com'
+        };
+
         // Brevo HTTP API (exact copy of your Postman)
         const response = await axios.post(
             'https://api.brevo.com/v3/smtp/email',
             {
-                sender: {
-                    name: process.env.BREVO_SENDER_NAME,
-                    email: process.env.BREVO_SENDER_EMAIL
-                },
+                sender,
                 to: [{ email }],
                 subject: 'Reset Your AAN Chat Password',
                 htmlContent: `
