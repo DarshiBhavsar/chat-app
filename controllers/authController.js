@@ -68,7 +68,7 @@ exports.forgotPassword = (req, res) => {
                 service: 'gmail',
                 auth: {
                     user: '190020107006ait@gmail.com',
-                    pass: 'qixy fuup emty gvgn'
+                    pass: 'tvva pkxy ehjl czf'
                 }
             });
 
