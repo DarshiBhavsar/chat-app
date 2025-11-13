@@ -1,9 +1,10 @@
+require('dotenv').config();
 const User = require('../models/user');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const path = require('path');
 const nodemailer = require('nodemailer');
-require('dotenv').config();
+
 
 
 const emitStatusFeedRefresh = async (io, userId, refreshData) => {
