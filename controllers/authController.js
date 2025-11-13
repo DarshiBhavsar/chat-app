@@ -67,6 +67,8 @@ exports.forgotPassword = (req, res) => {
                 { expiresIn: '1d' }
             );
 
+            console.log('SMTP Host:', process.env.SMTP_HOST);
+
             const transporter = nodemailer.createTransport({
                 host: process.env.SMTP_HOST,
                 port: process.env.SMTP_PORT,
