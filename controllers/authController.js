@@ -1,11 +1,7 @@
-require('dotenv').config();
 const User = require('../models/user');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const path = require('path');
-const nodemailer = require('nodemailer');
-
-
 
 const emitStatusFeedRefresh = async (io, userId, refreshData) => {
     try {
@@ -56,48 +52,41 @@ exports.loginUser = async (req, res) => {
 exports.forgotPassword = (req, res) => {
     const { email } = req.body;
 
-    User.findOne({ email })
+    User.findOne({ email: email })
         .then(user => {
             if (!user) {
                 return res.send({ Status: 'User not existed' });
             }
 
-            const token = jwt.sign(
-                { id: user._id },
-                process.env.JWT_SECRET,
-                { expiresIn: '1d' }
-            );
+            const token = jwt.sign({ id: user._id }, "jwt-secret-key", { expiresIn: '1d' });
 
-            console.log('SMTP Host:', process.env.SMTP_HOST);
-
-            const transporter = nodemailer.createTransport({
-                host: process.env.SMTP_HOST,
-                port: process.env.SMTP_PORT,
+            var transporter = nodemailer.createTransport({
+                // service: 'gmail',
+                host: 'smtp.gmail.com',
+                port: 465,                     // explicit TLS port
                 secure: true,
+                service: 'gmail',
                 auth: {
-                    user: process.env.SMTP_USER,
-                    pass: process.env.SMTP_PASS
+                    user: '190020107006ait@gmail.com',
+                    pass: 'qixy fuup emty gvgn'
                 }
             });
 
-            // ✅ Use sender name from .env file
-            const mailOptions = {
-                from: process.env.EMAIL_FROM, // <— changed this line
+            var mailOptions = {
+                from: '190020107006ait@gmail.com',
                 to: email,
                 subject: 'Reset Password Link',
-                text: `${process.env.FRONTEND_URL}/reset-password/${user._id}/${token}`
+                text: `https://socket-application-react-nodejs.onrender.com/api/auth/reset-password/${user._id}/${token}`
             };
 
             transporter.sendMail(mailOptions, function (error, info) {
                 if (error) {
-                    console.error('Email error:', error);  // log actual reason
-                    return res.send({ Status: 'Error sending email', error: error.message });
+                    console.log(error);
+                    return res.send({ Status: 'Error sending email' });
                 } else {
-                    console.log('Email sent:', info.response);
-                    return res.send({ Status: 'Success' });
+                    return res.send({ Status: "Success" });
                 }
             });
-
         })
         .catch(err => res.json(err));
 };
