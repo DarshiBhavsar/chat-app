@@ -61,10 +61,6 @@ exports.forgotPassword = (req, res) => {
             const token = jwt.sign({ id: user._id }, "jwt-secret-key", { expiresIn: '1d' });
 
             var transporter = nodemailer.createTransport({
-                // service: 'gmail',
-                host: 'smtp.gmail.com',
-                port: 465,                     // explicit TLS port
-                secure: true,
                 service: 'gmail',
                 auth: {
                     user: '190020107006ait@gmail.com',
