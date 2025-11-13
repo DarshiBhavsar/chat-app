@@ -77,8 +77,9 @@ exports.forgotPassword = (req, res) => {
                 }
             });
 
+            // ✅ Use sender name from .env file
             const mailOptions = {
-                from: process.env.SMTP_USER,
+                from: process.env.EMAIL_FROM, // <— changed this line
                 to: email,
                 subject: 'Reset Password Link',
                 text: `${process.env.FRONTEND_URL}/reset-password/${user._id}/${token}`
@@ -89,6 +90,7 @@ exports.forgotPassword = (req, res) => {
                     console.error('Email error:', error);
                     return res.send({ Status: 'Error sending email' });
                 } else {
+                    console.log('Email sent:', info.response);
                     return res.send({ Status: 'Success' });
                 }
             });
