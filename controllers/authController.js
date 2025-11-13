@@ -87,13 +87,14 @@ exports.forgotPassword = (req, res) => {
 
             transporter.sendMail(mailOptions, function (error, info) {
                 if (error) {
-                    console.error('Email error:', error);
-                    return res.send({ Status: 'Error sending email' });
+                    console.error('Email error:', error);  // log actual reason
+                    return res.send({ Status: 'Error sending email', error: error.message });
                 } else {
                     console.log('Email sent:', info.response);
                     return res.send({ Status: 'Success' });
                 }
             });
+
         })
         .catch(err => res.json(err));
 };
