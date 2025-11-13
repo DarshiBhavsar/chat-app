@@ -3,7 +3,7 @@ const User = require('../models/user');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const path = require('path');
-const nodemailer = require('nodemailer');
+const axios = require('axios');
 
 
 const emitStatusFeedRefresh = async (io, userId, refreshData) => {
@@ -52,53 +52,69 @@ exports.loginUser = async (req, res) => {
     }
 };
 
-exports.forgotPassword = (req, res) => {
-    const { email } = req.body;
+exports.forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ Status: 'Error', message: 'Email required' });
 
-    User.findOne({ email })
-        .then(user => {
-            if (!user) {
-                return res.send({ Status: 'User not existed' });
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ Status: 'User not found' });
+
+        const token = jwt.sign(
+            { id: user._id },
+            process.env.JWT_SECRET,
+            { expiresIn: '1d' }
+        );
+
+        const resetLink = `${process.env.FRONTEND_URL}/reset-password/${token}`;
+
+        // Brevo HTTP API (exact copy of your Postman)
+        const response = await axios.post(
+            'https://api.brevo.com/v3/smtp/email',
+            {
+                sender: {
+                    name: process.env.BREVO_SENDER_NAME,
+                    email: process.env.BREVO_SENDER_EMAIL
+                },
+                to: [{ email }],
+                subject: 'Reset Your AAN Chat Password',
+                htmlContent: `
+                    <div style="font-family:Arial,sans-serif;padding:20px;">
+                        <h2>AAN Chat</h2>
+                        <p>Hi ${user.username},</p>
+                        <p>Click below to reset your password:</p>
+                        <p>
+                            <a href="${resetLink}" 
+                               style="background:#4F46E5;color:white;padding:12px 24px;text-decoration:none;border-radius:8px;">
+                                Reset Password
+                            </a>
+                        </p>
+                        <p>Or copy: <code>${resetLink}</code></p>
+                        <hr>
+                        <small>This link expires in 24 hours.</small>
+                    </div>
+                `
+            },
+            {
+                headers: {
+                    'accept': 'application/json',
+                    'api-key': process.env.BREVO_API_KEY,
+                    'content-type': 'application/json'
+                }
             }
+        );
 
-            const token = jwt.sign(
-                { id: user._id },
-                process.env.JWT_SECRET,
-                { expiresIn: '1d' }
-            );
+        console.log('Email sent via Brevo API:', response.data);
+        return res.json({ Status: 'Success', message: 'Check your email' });
 
-            console.log('SMTP Host:', process.env.SMTP_HOST);
-
-            const transporter = nodemailer.createTransport({
-                host: process.env.SMTP_HOST,
-                port: process.env.SMTP_PORT,
-                secure: true,
-                auth: {
-                    user: process.env.SMTP_USER,
-                    pass: process.env.SMTP_PASS
-                }
-            });
-
-            // ✅ Use sender name from .env file
-            const mailOptions = {
-                from: process.env.EMAIL_FROM, // <— changed this line
-                to: email,
-                subject: 'Reset Password Link',
-                text: `${process.env.FRONTEND_URL}/reset-password/${user._id}/${token}`
-            };
-
-            transporter.sendMail(mailOptions, function (error, info) {
-                if (error) {
-                    console.error('Email error:', error);  // log actual reason
-                    return res.send({ Status: 'Error sending email', error: error.message });
-                } else {
-                    console.log('Email sent:', info.response);
-                    return res.send({ Status: 'Success' });
-                }
-            });
-
-        })
-        .catch(err => res.json(err));
+    } catch (err) {
+        console.error('Brevo API error:', err.response?.data || err.message);
+        return res.status(500).json({
+            Status: 'Error',
+            message: 'Failed to send email',
+            details: err.response?.data || err.message
+        });
+    }
 };
 
 exports.resetPassword = (req, res) => {
