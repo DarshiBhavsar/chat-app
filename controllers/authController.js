@@ -119,25 +119,22 @@ exports.forgotPassword = async (req, res) => {
     }
 };
 
-exports.resetPassword = (req, res) => {
-    const { id, token } = req.params;
+exports.resetPassword = async (req, res) => {
+    const { token } = req.params;
     const { password } = req.body;
 
-    jwt.verify(token, "jwt-secret-key", (err, decoded) => {
-        if (err) {
-            return res.json({ Status: "Error with token" });
-        } else {
-            bcrypt.hash(password, 10)
-                .then(hash => {
-                    User.findByIdAndUpdate(id, { password: hash })
-                        .then(u => res.send({ Status: 'Success' }))
-                        .catch(err => res.send({ Status: err }));
-                })
-                .catch(err => res.send({ Status: err }));
-        }
-    });
-};
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const userId = decoded.id; // ← Safe in JS
 
+        const hash = await bcrypt.hash(password, 10);
+        await User.findByIdAndUpdate(userId, { password: hash });
+
+        res.json({ Status: 'Success', message: 'Password reset!' });
+    } catch (err) {
+        res.json({ Status: 'Error', message: 'Invalid or expired token' });
+    }
+};
 exports.getAllUsers = async (req, res) => {
     try {
         const currentUserId = req.user?.id;
