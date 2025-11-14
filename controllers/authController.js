@@ -70,7 +70,7 @@ exports.forgotPassword = async (req, res) => {
 
         const sender = {
             name: process.env.BREVO_SENDER_NAME || 'AAN Chat',
-            email: process.env.BREVO_SENDER_EMAIL || 'no-reply@technotark.com'
+            email: process.env.BREVO_SENDER_EMAIL || '190020107006ait@gmail.com'
         };
 
         // Brevo HTTP API (exact copy of your Postman)
@@ -91,7 +91,6 @@ exports.forgotPassword = async (req, res) => {
                                 Reset Password
                             </a>
                         </p>
-                        <p>Or copy: <code>${resetLink}</code></p>
                         <hr>
                         <small>This link expires in 24 hours.</small>
                     </div>
