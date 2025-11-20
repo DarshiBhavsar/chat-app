@@ -5,7 +5,6 @@ const bcrypt = require('bcrypt');
 const path = require('path');
 const axios = require('axios');
 
-
 const emitStatusFeedRefresh = async (io, userId, refreshData) => {
     try {
         io.to(userId).emit('status_feed_refresh', refreshData);
@@ -134,6 +133,7 @@ exports.resetPassword = async (req, res) => {
         res.json({ Status: 'Error', message: 'Invalid or expired token' });
     }
 };
+
 exports.getAllUsers = async (req, res) => {
     try {
         const currentUserId = req.user?.id;
