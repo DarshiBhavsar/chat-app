@@ -421,7 +421,11 @@ io.on('connection', socket => {
                 return;
             }
 
-            // Check friend relationship first
+            // Log location data if present
+            if (payload.location) {
+                console.log('📍 Private message with location:', payload.location);
+            }
+
             const sender = await User.findById(senderUser.id).populate('friends');
             const recipient = await User.findById(recipientId);
 
@@ -430,7 +434,6 @@ io.on('connection', socket => {
                 return;
             }
 
-            // Check if they are friends
             const areFriends = sender.friends.some(friend => friend._id.toString() === recipientId);
             if (!areFriends) {
                 socket.emit('message_send_error', {
@@ -440,7 +443,6 @@ io.on('connection', socket => {
                 return;
             }
 
-            // Check blocking logic
             if (recipient.blockedUsers && recipient.blockedUsers.includes(senderUser.id)) {
                 socket.emit('message_send_error', {
                     error: 'Cannot send message to this user',
@@ -461,19 +463,17 @@ io.on('connection', socket => {
             await updateLastSeen(senderUser.id);
 
             console.log(`📨 Sending private message from ${senderUser.id} to ${recipientId}`);
-            console.log(`📊 Recipient online status: ${recipientSocketId ? 'ONLINE' : 'OFFLINE'}`);
 
             if (recipientSocketId) {
-                // Recipient is ONLINE - send message and auto-mark as delivered
                 console.log(`✅ Recipient ${recipientId} is ONLINE, delivering message immediately`);
 
-                // Send the message to recipient
+                // CRITICAL: Include location in the emitted payload
                 io.to(recipientSocketId).emit('received-message', {
                     ...payload,
-                    replyTo: payload.replyTo || null
+                    replyTo: payload.replyTo || null,
+                    location: payload.location || null // ← Ensure location is included
                 });
 
-                // CRITICAL FIX: Automatically mark as delivered since recipient is online
                 const messageId = payload.id || payload._id;
                 if (messageId) {
                     try {
@@ -483,7 +483,6 @@ io.on('connection', socket => {
                             deliveredAt: new Date()
                         });
 
-                        // Notify sender immediately about delivery
                         socket.emit('message-delivered', {
                             messageId,
                             userId: recipientId,
@@ -491,20 +490,15 @@ io.on('connection', socket => {
                             messageStatus: 'delivered'
                         });
 
-                        console.log(`📬 ✅ Message ${messageId} auto-marked as DELIVERED (recipient online)`);
+                        console.log(`📬 ✅ Message ${messageId} auto-marked as DELIVERED`);
                     } catch (error) {
                         console.error('❌ Error auto-marking message as delivered:', error);
                     }
                 }
 
-                console.log(`📨 ✅ Private message sent to ${recipientId} (Socket: ${recipientSocketId})`);
+                console.log(`📨 ✅ Private message sent to ${recipientId}`);
             } else {
-                // Recipient is OFFLINE - message stays as 'sent' 
-                console.log(`📱 ❌ Recipient ${recipientId} is OFFLINE, message remains as 'sent'`);
-            }
-
-            if (payload.replyTo) {
-                console.log(`📝 Message with reply sent - Reply to: ${payload.replyTo.message}`);
+                console.log(`📱 ❌ Recipient ${recipientId} is OFFLINE`);
             }
 
         } catch (error) {
@@ -649,6 +643,11 @@ io.on('connection', socket => {
     socket.on('send-group-message', async (payload) => {
         console.log('📨 Sending message to group:', payload.groupId);
 
+        // Log location if present
+        if (payload.location) {
+            console.log('📍 Group message with location:', payload.location);
+        }
+
         const sender = onlineUsers.get(socket.id);
         if (sender) {
             await updateLastSeen(sender.id);
@@ -660,18 +659,18 @@ io.on('connection', socket => {
         }
 
         const messageId = payload.id || payload._id;
-        console.log(`📊 Group message ID: ${messageId}`);
 
-        // Send message to all group members
+        // CRITICAL: Include location in the complete payload
         const completePayload = {
             ...payload,
-            replyTo: payload.replyTo || null
+            replyTo: payload.replyTo || null,
+            location: payload.location || null // ← Ensure location is included
         };
 
-        // CRITICAL FIX: Emit to group members EXCEPT sender to avoid duplicate messages
+        // Emit to group members EXCEPT sender
         socket.to(payload.groupId).emit('received-group-message', completePayload);
 
-        // CRITICAL FIX: Enhanced auto-delivery logic for online group members
+        // Auto-delivery logic for online group members
         if (messageId && sender) {
             try {
                 const Group = require('./models/group');
@@ -679,56 +678,29 @@ io.on('connection', socket => {
 
                 if (group) {
                     const onlineMembers = group.members.filter(member =>
-                        member._id.toString() !== sender.id && // Exclude sender
-                        userSocketMap.has(member._id.toString()) // Only online members
+                        member._id.toString() !== sender.id &&
+                        userSocketMap.has(member._id.toString())
                     );
 
-                    console.log(`📊 Group has ${group.members.length} total members, ${onlineMembers.length} are online (excluding sender)`);
+                    console.log(`📊 Group has ${onlineMembers.length} online members (excluding sender)`);
 
                     if (onlineMembers.length > 0) {
-                        // CRITICAL: Update message status to delivered in database
                         const Message = require('./models/message');
                         await Message.findByIdAndUpdate(messageId, {
                             messageStatus: 'delivered',
                             deliveredAt: new Date()
                         });
 
-                        // CRITICAL: Immediately notify sender about delivery status
                         socket.emit('group-message-delivered', {
                             messageId,
-                            userId: 'auto_delivery', // Special indicator for auto-delivery
+                            userId: 'auto_delivery',
                             groupId: payload.groupId,
                             deliveredAt: new Date(),
                             messageStatus: 'delivered',
                             onlineMembersCount: onlineMembers.length
                         });
 
-                        console.log(`📬 ✅ Group message ${messageId} auto-marked as DELIVERED and sender notified`);
-
-                        // CRITICAL: Set up auto-read logic after 3 seconds
-                        // setTimeout(async () => {
-                        //     try {
-                        //         await Message.findByIdAndUpdate(messageId, {
-                        //             messageStatus: 'read',
-                        //             readAt: new Date()
-                        //         });
-
-                        //         socket.emit('group-message-read', {
-                        //             messageId,
-                        //             userId: 'auto_read',
-                        //             groupId: payload.groupId,
-                        //             readAt: new Date(),
-                        //             messageStatus: 'read'
-                        //         });
-
-                        //         console.log(`👁️ ✅ Group message ${messageId} auto-marked as READ and sender notified`);
-                        //     } catch (error) {
-                        //         console.error('❌ Error auto-marking message as read:', error);
-                        //     }
-                        // }, 3000);
-                        console.log(`📬 ✅ Group message ${messageId} auto-marked as DELIVERED and sender notified`);
-                    } else {
-                        console.log(`📱 ❌ No online members in group, message remains as 'sent'`);
+                        console.log(`📬 ✅ Group message ${messageId} auto-marked as DELIVERED`);
                     }
                 }
             } catch (error) {
@@ -736,9 +708,8 @@ io.on('connection', socket => {
             }
         }
 
-        console.log(`📨 ✅ Message broadcast in group ${payload.groupId} by ${payload.senderId}`);
+        console.log(`📨 ✅ Message broadcast in group ${payload.groupId}`);
     });
-
 
     // socket.on('group-typing', async ({ groupId, userId, userName }) => {
     //     console.log(`🟢 Server: User ${userName} (${userId}) is typing in group ${groupId}`);

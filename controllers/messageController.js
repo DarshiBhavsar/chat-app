@@ -14,8 +14,31 @@ exports.sendMessage = async (req, res) => {
             audioDuration,
             video = [],
             replyTo,
-            location
+            location // ← Location data from frontend
         } = req.body;
+
+        console.log('📍 Received location data:', location);
+
+        // CRITICAL: Validate and clean location data
+        let cleanedLocation = null;
+        if (location && typeof location === 'object') {
+            // STRICT validation - only accept properly formatted location
+            if (
+                location.latitude &&
+                location.longitude &&
+                !location.place_id &&
+                !location.display_name
+            ) {
+                cleanedLocation = {
+                    latitude: parseFloat(location.latitude),
+                    longitude: parseFloat(location.longitude),
+                    address: location.address || 'Location shared'
+                };
+                console.log('✅ Location data validated:', cleanedLocation);
+            } else {
+                console.warn('⚠️ Invalid location data format, ignoring');
+            }
+        }
 
         const newMessage = new Message({
             userId: senderId,
@@ -29,7 +52,7 @@ exports.sendMessage = async (req, res) => {
             audioDuration,
             replyTo: replyTo || null,
             video,
-            location: location || null,
+            location: cleanedLocation, // ← Use cleaned location
             time: new Date().toLocaleTimeString('en-US', {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -37,18 +60,21 @@ exports.sendMessage = async (req, res) => {
                 timeZone: 'Asia/Kolkata'
             }).toLowerCase(),
             isPrivate,
-            messageStatus: 'sent', // Initialize with 'sent' status
+            messageStatus: 'sent',
             deliveredAt: null,
             readAt: null
         });
 
         const savedMessage = await newMessage.save();
 
-        // FIXED: Return message with proper status structure
+        console.log('✅ Message saved with location:', savedMessage.location);
+
+        // FIXED: Return message with proper structure
         const responseMessage = {
             ...savedMessage.toObject(),
             id: savedMessage._id,
-            messageStatus: 'sent'
+            messageStatus: 'sent',
+            location: cleanedLocation // ← Ensure location is returned
         };
 
         return res.status(201).json(responseMessage);
@@ -74,22 +100,37 @@ exports.sendGroupMessage = async (req, res) => {
             audioDuration,
             video = [],
             replyTo,
-            location,
-            groupMembers = [] // This might be empty/null from frontend
+            location, // ← Location data
+            groupMembers = []
         } = req.body;
 
-        console.log('📨 Group Message Request:', {
-            senderId,
-            groupId,
-            groupMembers,
-            message: message?.substring(0, 50) + '...'
-        });
+        console.log('📍 Group message received with location:', location);
 
         if (!groupId) {
             return res.status(400).json({ message: 'groupId is required for group messages' });
         }
 
-        // CRITICAL FIX: Fetch actual group members from database instead of relying on frontend
+        // Validate and clean location data
+        let cleanedLocation = null;
+        if (location && typeof location === 'object') {
+            if (
+                location.latitude &&
+                location.longitude &&
+                !location.place_id &&
+                !location.display_name
+            ) {
+                cleanedLocation = {
+                    latitude: parseFloat(location.latitude),
+                    longitude: parseFloat(location.longitude),
+                    address: location.address || 'Location shared'
+                };
+                console.log('✅ Group location data validated:', cleanedLocation);
+            } else {
+                console.warn('⚠️ Invalid group location data format, ignoring');
+            }
+        }
+
+        // Fetch actual group members from database
         const Group = require('../models/group');
         const group = await Group.findById(groupId).populate('members', '_id name');
 
@@ -98,26 +139,12 @@ exports.sendGroupMessage = async (req, res) => {
             return res.status(404).json({ message: 'Group not found' });
         }
 
-        console.log('✅ Found group:', {
-            name: group.name,
-            memberCount: group.members.length,
-            members: group.members.map(m => ({ id: m._id, name: m.name }))
-        });
-
-        // Extract valid member IDs (excluding sender)
         const validGroupMembers = group.members
             .map(member => {
-                // Handle both populated and non-populated members
                 const memberId = member._id ? member._id.toString() : member.toString();
                 return memberId;
             })
-            .filter(memberId => memberId && memberId !== senderId); // Exclude sender
-
-        console.log('✅ Valid group members (excluding sender):', validGroupMembers);
-
-        if (validGroupMembers.length === 0) {
-            console.log('⚠️ No other members found in group, sending anyway');
-        }
+            .filter(memberId => memberId && memberId !== senderId);
 
         const time = new Date().toLocaleTimeString('en-US', {
             hour: '2-digit',
@@ -126,17 +153,11 @@ exports.sendGroupMessage = async (req, res) => {
             timeZone: 'Asia/Kolkata'
         }).toLowerCase();
 
-        // CRITICAL FIX: Create group delivery status with valid member IDs only
         const groupDeliveryStatus = validGroupMembers.map(memberId => ({
             userId: memberId,
             deliveredAt: null,
             readAt: null
         }));
-
-        console.log('✅ Group delivery status created:', {
-            statusCount: groupDeliveryStatus.length,
-            members: groupDeliveryStatus.map(s => s.userId)
-        });
 
         const newMessage = new Message({
             userId: senderId,
@@ -150,44 +171,28 @@ exports.sendGroupMessage = async (req, res) => {
             audio,
             replyTo: replyTo || null,
             video,
-            location: location || null,
+            location: cleanedLocation, // ← Use cleaned location
             audioDuration,
-            isPrivate: true, // Keep as true for group messages as per your schema
+            isPrivate: true,
             messageStatus: 'sent',
-            groupDeliveryStatus // Now contains valid user IDs
-        });
-
-        console.log('📝 Creating message with delivery status:', {
-            messageId: newMessage._id,
-            deliveryStatusCount: newMessage.groupDeliveryStatus.length,
-            validUserIds: newMessage.groupDeliveryStatus.every(s => s.userId)
+            groupDeliveryStatus
         });
 
         const savedMessage = await newMessage.save();
 
-        console.log('✅ Group message saved successfully:', {
-            messageId: savedMessage._id,
-            groupId: savedMessage.groupId,
-            deliveryStatusLength: savedMessage.groupDeliveryStatus.length
-        });
+        console.log('✅ Group message saved with location:', savedMessage.location);
 
-        // Return the message with actual group member data
         const responseMessage = {
             ...savedMessage.toObject(),
             id: savedMessage._id,
-            groupMembers: validGroupMembers // Send back the actual member IDs
+            groupMembers: validGroupMembers,
+            location: cleanedLocation // ← Ensure location is returned
         };
 
         return res.status(201).json(responseMessage);
 
     } catch (error) {
         console.error('❌ Send Group Message Error:', error);
-        console.error('❌ Error details:', {
-            name: error.name,
-            message: error.message,
-            stack: error.stack?.split('\n')?.slice(0, 3)
-        });
-
         return res.status(500).json({
             message: 'Failed to send group message',
             error: error.message
