@@ -13,7 +13,8 @@ exports.sendMessage = async (req, res) => {
             audio = [],
             audioDuration,
             video = [],
-            replyTo
+            replyTo,
+            location
         } = req.body;
 
         const newMessage = new Message({
@@ -28,6 +29,7 @@ exports.sendMessage = async (req, res) => {
             audioDuration,
             replyTo: replyTo || null,
             video,
+            location: location || null,
             time: new Date().toLocaleTimeString('en-US', {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -72,6 +74,7 @@ exports.sendGroupMessage = async (req, res) => {
             audioDuration,
             video = [],
             replyTo,
+            location,
             groupMembers = [] // This might be empty/null from frontend
         } = req.body;
 
@@ -147,6 +150,7 @@ exports.sendGroupMessage = async (req, res) => {
             audio,
             replyTo: replyTo || null,
             video,
+            location: location || null,
             audioDuration,
             isPrivate: true, // Keep as true for group messages as per your schema
             messageStatus: 'sent',

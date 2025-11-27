@@ -47,6 +47,12 @@ const messageSchema = new mongoose.Schema({
         readAt: { type: Date }
     }],
 
+    location: {
+        latitude: { type: Number },
+        longitude: { type: Number },
+        address: { type: String }   // optional readable address
+    },
+
     replyTo: {
         id: { type: String },
         message: { type: String },
