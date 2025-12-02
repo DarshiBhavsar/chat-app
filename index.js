@@ -192,48 +192,37 @@ app.get('/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
 
-        console.log(`📊 API: Fetching last seen for user ${userId}`);
+        // PRIORITY 1: Check if user sent a heartbeat in the last 60 seconds → definitely online
+        const lastHeartbeat = userHeartbeats.get(userId);
+        const isRecentlyActive = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 60000); // 60 sec
 
-        // CRITICAL: Check if user is TRULY online RIGHT NOW
-        const isOnline = isUserTrulyOnline(userId);
-
-        if (isOnline) {
-            // User is online - return current time
-            const response = {
+        if (isRecentlyActive) {
+            return res.json({
                 userId,
                 isOnline: true,
                 lastSeen: new Date(),
                 lastSeenText: 'Online'
-            };
-
-            console.log(`✅ API: User ${userId} is ONLINE`);
-            return res.json(response);
+            });
         }
 
-        // User is offline - fetch from database (most reliable source)
+        // PRIORITY 2: If no recent heartbeat, fall back to database (offline)
         const user = await User.findById(userId).select('lastSeen isOnline username');
-
         if (!user) {
-            console.log(`❌ API: User ${userId} not found`);
             return res.status(404).json({ error: 'User not found' });
         }
 
-        // CRITICAL: Always use database lastSeen for offline users
         const lastSeen = user.lastSeen || new Date();
         const lastSeenText = formatLastSeen(lastSeen);
 
-        const response = {
+        res.json({
             userId,
             isOnline: false,
             lastSeen,
             lastSeenText
-        };
+        });
 
-        console.log(`✅ API: User ${userId} is OFFLINE, last seen: ${lastSeenText}`);
-
-        res.json(response);
     } catch (error) {
-        console.error('❌ API: Error fetching last seen:', error);
+        console.error('API: Error fetching last seen:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
