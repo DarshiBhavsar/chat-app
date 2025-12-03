@@ -66,6 +66,7 @@ const updateLastSeen = async (userId) => {
     const timestamp = new Date();
     userLastSeen.set(userId, timestamp);
     userHeartbeats.set(userId, timestamp);
+
     try {
         await User.findByIdAndUpdate(userId, {
             lastSeen: timestamp,
@@ -80,28 +81,32 @@ const isUserTrulyOnline = (userId) => {
     const socketId = userSocketMap.get(userId);
     const hasSocket = socketId && onlineUsers.has(socketId);
     const lastHeartbeat = userHeartbeats.get(userId);
-    const heartbeatRecent = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 45000);
+    const heartbeatRecent = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 10000); // 10 sec
     return hasSocket && heartbeatRecent;
 };
 // Helper function to set user offline
 const setUserOffline = async (userId) => {
     const timestamp = new Date();
     userLastSeen.set(userId, timestamp);
+    userHeartbeats.delete(userId);
+
     try {
         const user = await User.findByIdAndUpdate(
             userId,
             { lastSeen: timestamp, isOnline: false },
             { new: true }
         ).select('lastSeen isOnline');
+
         if (!user) return;
 
+        // Send raw ISO timestamp only
         io.emit('user-status-updated', {
             userId,
             isOnline: false,
-            lastSeen: user.lastSeen.toISOString(),
-            lastSeenText: formatLastSeen(user.lastSeen)
+            lastSeen: user.lastSeen.toISOString()
         });
-        console.log(`User ${userId} marked offline at ${formatLastSeen(user.lastSeen)}`);
+
+        console.log(`📴 User ${userId} offline at ${user.lastSeen.toISOString()}`);
     } catch (error) {
         console.error('Error setting user offline:', error);
     }
@@ -123,25 +128,28 @@ const getUserLastSeen = async (userId) => {
 // Helper function to format last seen text
 const formatLastSeen = (lastSeenTime) => {
     if (!lastSeenTime) return 'Never';
+
     const last = new Date(lastSeenTime);
     if (isNaN(last.getTime())) return 'Never';
+
     const now = new Date();
-    const istOffset = 5.5 * 60 * 60 * 1000;
+    // Convert to IST (+5:30) for consistent comparison
+    const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
     const nowIST = new Date(now.getTime() + istOffset);
     const lastIST = new Date(last.getTime() + istOffset);
 
     const isToday = nowIST.toDateString() === lastIST.toDateString();
-    const isYesterday = nowIST.getDate() === lastIST.getDate() + 1 &&
+    const isYesterday =
+        nowIST.getDate() === lastIST.getDate() + 1 &&
         nowIST.getMonth() === lastIST.getMonth() &&
         nowIST.getFullYear() === lastIST.getFullYear();
 
-    const hours = lastIST.getHours() % 12 || 12;
-    const minutes = lastIST.getMinutes().toString().padStart(2, '0');
-    const ampm = lastIST.getHours() >= 12 ? 'PM' : 'AM';
-    const timeStr = `${hours}:${minutes} ${ampm}`;
-
-    if (isToday) return `Today at ${timeStr}`;
-    if (isYesterday) return `Yesterday at ${timeStr}`;
+    if (isToday) {
+        return `Today at ${lastIST.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+    }
+    if (isYesterday) {
+        return `Yesterday at ${lastIST.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
+    }
 
     const diffMs = now - last;
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
@@ -152,6 +160,7 @@ const formatLastSeen = (lastSeenTime) => {
     if (diffMinutes < 60) return `${diffMinutes}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
+
     return last.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
@@ -171,6 +180,8 @@ const emitToUsers = (io, userIds, event, data) => {
         io.to(userId).emit(event, data);
     });
 };
+
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/documents', express.static('documents'));
 app.use('/audio', express.static(path.join(__dirname, 'audio')));
@@ -181,8 +192,9 @@ app.get('/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
 
+        // FIXED: Check if user sent a heartbeat in the last 10 seconds (was 60)
         const lastHeartbeat = userHeartbeats.get(userId);
-        const isRecentlyActive = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 60000);
+        const isRecentlyActive = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 10000); // 10 sec
 
         if (isRecentlyActive) {
             return res.json({
@@ -193,16 +205,22 @@ app.get('/api/users/:userId/last-seen', async (req, res) => {
             });
         }
 
+        // Fall back to database (offline)
         const user = await User.findById(userId).select('lastSeen isOnline username');
-        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
 
         const lastSeen = user.lastSeen || new Date();
+        const lastSeenText = formatLastSeen(lastSeen);
+
         res.json({
             userId,
             isOnline: false,
             lastSeen,
-            lastSeenText: formatLastSeen(lastSeen)
+            lastSeenText
         });
+
     } catch (error) {
         console.error('API: Error fetching last seen:', error);
         res.status(500).json({ error: 'Server error' });
@@ -322,7 +340,38 @@ io.on('connection', socket => {
             console.error('❌ Error processing user-joined event:', error);
         }
     });
+    setInterval(() => {
+        const now = Date.now();
+        const staleThreshold = 15000; // 15 seconds
 
+        userHeartbeats.forEach((lastHeartbeat, userId) => {
+            const timeSinceHeartbeat = now - lastHeartbeat.getTime();
+
+            if (timeSinceHeartbeat > staleThreshold) {
+                const socketId = userSocketMap.get(userId);
+
+                // If user has no recent heartbeat, mark them offline
+                if (socketId && onlineUsers.has(socketId)) {
+                    console.log(`⚠️ User ${userId} has stale heartbeat (${timeSinceHeartbeat}ms), marking offline`);
+
+                    setUserOffline(userId).then(() => {
+                        onlineUsers.delete(socketId);
+                        userSocketMap.delete(userId);
+                        userHeartbeats.delete(userId);
+
+                        getUserLastSeen(userId).then(lastSeen => {
+                            io.emit('user-status-updated', {
+                                userId,
+                                isOnline: false,
+                                lastSeen,
+                                lastSeenText: formatLastSeen(lastSeen)
+                            });
+                        });
+                    });
+                }
+            }
+        });
+    }, 15000); // Run every 15 seconds
 
     socket.on('heartbeat', async ({ userId }) => {
         if (userId) {
@@ -540,17 +589,22 @@ io.on('connection', socket => {
 
     socket.on('user-left', async ({ userId }, callback) => {
         if (userId) {
+            console.log(`🚪 User explicitly logging out: ${userId}`);
+
             const socketId = userSocketMap.get(userId);
             if (socketId) {
                 onlineUsers.delete(socketId);
             }
             userSocketMap.delete(userId);
+            userHeartbeats.delete(userId); // CRITICAL: Immediately clear heartbeat
 
-            // Set user offline and update last seen
+            // CRITICAL: Immediately set user offline without delay
             await setUserOffline(userId);
 
-            const lastSeen = getUserLastSeen(userId);
-            io.emit('user-left-broadcast', {
+            const lastSeen = await getUserLastSeen(userId);
+
+            // Broadcast offline status immediately
+            io.emit('user-logged-out', {
                 userId,
                 isOnline: false,
                 lastSeen,
@@ -559,11 +613,12 @@ io.on('connection', socket => {
 
             io.emit('online-users', Array.from(onlineUsers.values()));
 
-            console.log(`User explicitly left: ${userId}`);
+            console.log(`✅ User ${userId} marked offline immediately`);
 
             if (callback) callback();
         }
     });
+
 
     socket.on('join-group', async (data) => {
         const { groupId, userId } = data;
@@ -1931,65 +1986,74 @@ io.on('connection', socket => {
     });
 
     socket.on('disconnect', async () => {
-        if (!onlineUsers.has(socket.id)) return;
+        if (onlineUsers.has(socket.id)) {
+            const user = onlineUsers.get(socket.id);
+            const roomsArray = Array.from(socket.rooms);
 
-        const user = onlineUsers.get(socket.id);
-        const roomsArray = Array.from(socket.rooms);
+            // FIXED: Reduced grace period from 3000ms to 1000ms
+            setTimeout(async () => {
+                // Check if user has reconnected
+                const currentSocketId = userSocketMap.get(user.id);
 
-        // 10-second grace period for reconnection (prevents fake offline)
-        setTimeout(async () => {
-            const currentSocketId = userSocketMap.get(user.id);
+                // Only mark offline if they haven't reconnected
+                if (!currentSocketId || currentSocketId === socket.id) {
+                    await setUserOffline(user.id);
 
-            // Only mark as offline if user DID NOT reconnect with a new socket
-            if (!currentSocketId || currentSocketId === socket.id) {
-                await setUserOffline(user.id);
+                    onlineUsers.delete(socket.id);
+                    userSocketMap.delete(user.id);
+                    userHeartbeats.delete(user.id); // Clear heartbeat
 
-                onlineUsers.delete(socket.id);
-                userSocketMap.delete(user.id);
-                // DO NOT DELETE heartbeat here → keeps API accurate during grace period
+                    const lastSeen = await getUserLastSeen(user.id);
 
-                // Get fresh last seen from DB
-                const dbUser = await User.findById(user.id).select('lastSeen');
-                const finalLastSeen = dbUser?.lastSeen || new Date();
+                    // Broadcast offline status
+                    io.emit('user-status-updated', {
+                        userId: user.id,
+                        isOnline: false,
+                        lastSeen,
+                        lastSeenText: formatLastSeen(lastSeen)
+                    });
 
-                // CORRECT BROADCAST — this was completely broken before
-                io.emit('user-status-updated', {
-                    userId: user.id,
-                    isOnline: false,
-                    lastSeen: finalLastSeen.toISOString(),
-                    lastSeenText: formatLastSeen(finalLastSeen)
-                });
+                    io.emit('online-users', Array.from(onlineUsers.values()));
 
-                console.log(`User fully offline: ${user.name} (${user.id}) → ${formatLastSeen(finalLastSeen)}`);
-            } else {
-                console.log(`User ${user.id} reconnected with new socket → staying online`);
-            }
-        }, 10000); // 10 seconds grace period (better than 3s)
-
-        // Immediate cleanup (typing + group calls) — this part was already correct
-        roomsArray.forEach(roomId => {
-            if (roomId !== socket.id) {
-                socket.to(roomId).emit('group-stop-typing', {
-                    groupId: roomId,
-                    id: user.id,
-                    username: user.name
-                });
-            }
-        });
-
-        activeGroupCalls.forEach((groupCall, groupId) => {
-            if (groupCall.participants.has(user.id)) {
-                groupCall.participants.delete(user.id);
-                const groupCallRoom = `group-call-${groupId}`;
-                socket.to(groupCallRoom).emit('group-participant-left', { userId: user.id });
-
-                if (groupCall.participants.size === 0) {
-                    activeGroupCalls.delete(groupId);
-                    io.to(groupCallRoom).emit('group-call-ended');
+                    console.log(`❌ User disconnected: ${user.name} (ID: ${user.id})`);
+                } else {
+                    console.log(`✅ User ${user.id} reconnected, keeping online status`);
                 }
-            }
-        });
+            }, 1000); // FIXED: 1 second grace period (was 3 seconds)
+
+            // Clean up typing indicators immediately
+            roomsArray.forEach(roomId => {
+                if (roomId !== socket.id) {
+                    socket.to(roomId).emit('group-stop-typing', {
+                        groupId: roomId,
+                        id: user.id,
+                        username: user.name
+                    });
+                }
+            });
+
+            // Clean up group calls immediately
+            activeGroupCalls.forEach((groupCall, groupId) => {
+                if (groupCall.participants.has(user.id)) {
+                    groupCall.participants.delete(user.id);
+
+                    const groupCallRoom = `group-call-${groupId}`;
+                    socket.to(groupCallRoom).emit('group-participant-left', {
+                        userId: user.id
+                    });
+
+                    console.log(`🔚 User ${user.id} removed from group call ${groupId} due to disconnect`);
+
+                    if (groupCall.participants.size === 0) {
+                        activeGroupCalls.delete(groupId);
+                        io.to(groupCallRoom).emit('group-call-ended');
+                        console.log(`🔚 Group call ${groupId} ended (no participants after disconnect)`);
+                    }
+                }
+            });
+        }
     });
+
 });
 
 const PORT = process.env.PORT || 5000;
