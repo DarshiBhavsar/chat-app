@@ -66,7 +66,6 @@ const updateLastSeen = async (userId) => {
     const timestamp = new Date();
     userLastSeen.set(userId, timestamp);
     userHeartbeats.set(userId, timestamp);
-
     try {
         await User.findByIdAndUpdate(userId, {
             lastSeen: timestamp,
@@ -88,25 +87,21 @@ const isUserTrulyOnline = (userId) => {
 const setUserOffline = async (userId) => {
     const timestamp = new Date();
     userLastSeen.set(userId, timestamp);
-    userHeartbeats.delete(userId);
-
     try {
         const user = await User.findByIdAndUpdate(
             userId,
             { lastSeen: timestamp, isOnline: false },
             { new: true }
         ).select('lastSeen isOnline');
-
         if (!user) return;
 
-        // Send raw ISO timestamp only
         io.emit('user-status-updated', {
             userId,
             isOnline: false,
-            lastSeen: user.lastSeen.toISOString()
+            lastSeen: user.lastSeen.toISOString(),
+            lastSeenText: formatLastSeen(user.lastSeen)
         });
-
-        console.log(`📴 User ${userId} offline at ${user.lastSeen.toISOString()}`);
+        console.log(`User ${userId} marked offline at ${formatLastSeen(user.lastSeen)}`);
     } catch (error) {
         console.error('Error setting user offline:', error);
     }
@@ -128,28 +123,25 @@ const getUserLastSeen = async (userId) => {
 // Helper function to format last seen text
 const formatLastSeen = (lastSeenTime) => {
     if (!lastSeenTime) return 'Never';
-
     const last = new Date(lastSeenTime);
     if (isNaN(last.getTime())) return 'Never';
-
     const now = new Date();
-    // Convert to IST (+5:30) for consistent comparison
-    const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
+    const istOffset = 5.5 * 60 * 60 * 1000;
     const nowIST = new Date(now.getTime() + istOffset);
     const lastIST = new Date(last.getTime() + istOffset);
 
     const isToday = nowIST.toDateString() === lastIST.toDateString();
-    const isYesterday =
-        nowIST.getDate() === lastIST.getDate() + 1 &&
+    const isYesterday = nowIST.getDate() === lastIST.getDate() + 1 &&
         nowIST.getMonth() === lastIST.getMonth() &&
         nowIST.getFullYear() === lastIST.getFullYear();
 
-    if (isToday) {
-        return `Today at ${lastIST.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
-    }
-    if (isYesterday) {
-        return `Yesterday at ${lastIST.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
-    }
+    const hours = lastIST.getHours() % 12 || 12;
+    const minutes = lastIST.getMinutes().toString().padStart(2, '0');
+    const ampm = lastIST.getHours() >= 12 ? 'PM' : 'AM';
+    const timeStr = `${hours}:${minutes} ${ampm}`;
+
+    if (isToday) return `Today at ${timeStr}`;
+    if (isYesterday) return `Yesterday at ${timeStr}`;
 
     const diffMs = now - last;
     const diffMinutes = Math.floor(diffMs / (1000 * 60));
@@ -160,7 +152,6 @@ const formatLastSeen = (lastSeenTime) => {
     if (diffMinutes < 60) return `${diffMinutes}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-
     return last.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
@@ -186,15 +177,12 @@ app.use('/audio', express.static(path.join(__dirname, 'audio')));
 app.use('/videos', express.static(path.join(__dirname, 'videos')));
 app.use('/story', express.static(path.join(__dirname, 'story')));
 
-// Add endpoint to get user's last seen
-// CRITICAL FIX: Make sure this endpoint is BEFORE your socket.io handlers
 app.get('/api/users/:userId/last-seen', async (req, res) => {
     try {
         const { userId } = req.params;
 
-        // PRIORITY 1: Check if user sent a heartbeat in the last 60 seconds → definitely online
         const lastHeartbeat = userHeartbeats.get(userId);
-        const isRecentlyActive = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 60000); // 60 sec
+        const isRecentlyActive = lastHeartbeat && (Date.now() - lastHeartbeat.getTime() < 60000);
 
         if (isRecentlyActive) {
             return res.json({
@@ -205,22 +193,16 @@ app.get('/api/users/:userId/last-seen', async (req, res) => {
             });
         }
 
-        // PRIORITY 2: If no recent heartbeat, fall back to database (offline)
         const user = await User.findById(userId).select('lastSeen isOnline username');
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
+        if (!user) return res.status(404).json({ error: 'User not found' });
 
         const lastSeen = user.lastSeen || new Date();
-        const lastSeenText = formatLastSeen(lastSeen);
-
         res.json({
             userId,
             isOnline: false,
             lastSeen,
-            lastSeenText
+            lastSeenText: formatLastSeen(lastSeen)
         });
-
     } catch (error) {
         console.error('API: Error fetching last seen:', error);
         res.status(500).json({ error: 'Server error' });
@@ -1949,72 +1931,64 @@ io.on('connection', socket => {
     });
 
     socket.on('disconnect', async () => {
-        if (onlineUsers.has(socket.id)) {
-            const user = onlineUsers.get(socket.id);
-            const roomsArray = Array.from(socket.rooms);
+        if (!onlineUsers.has(socket.id)) return;
 
-            // Wait a bit before marking offline (grace period for reconnection)
-            setTimeout(async () => {
-                // Check if user has reconnected
-                const currentSocketId = userSocketMap.get(user.id);
+        const user = onlineUsers.get(socket.id);
+        const roomsArray = Array.from(socket.rooms);
 
-                // Only mark offline if they haven't reconnected
-                if (!currentSocketId || currentSocketId === socket.id) {
-                    await setUserOffline(user.id);
+        // 10-second grace period for reconnection (prevents fake offline)
+        setTimeout(async () => {
+            const currentSocketId = userSocketMap.get(user.id);
 
-                    onlineUsers.delete(socket.id);
-                    userSocketMap.delete(user.id);
-                    userHeartbeats.delete(user.id); // Clear heartbeat
+            // Only mark as offline if user DID NOT reconnect with a new socket
+            if (!currentSocketId || currentSocketId === socket.id) {
+                await setUserOffline(user.id);
 
-                    const lastSeen = getUserLastSeen(user.id);
+                onlineUsers.delete(socket.id);
+                userSocketMap.delete(user.id);
+                // DO NOT DELETE heartbeat here → keeps API accurate during grace period
 
-                    // Broadcast offline status
-                    io.emit('user-status-updated', {
-                        userId: user.id,
-                        isOnline: false,
-                        lastSeen,
-                        lastSeenText: timestamp.toISOString()
-                    });
+                // Get fresh last seen from DB
+                const dbUser = await User.findById(user.id).select('lastSeen');
+                const finalLastSeen = dbUser?.lastSeen || new Date();
 
-                    io.emit('online-users', Array.from(onlineUsers.values()));
+                // CORRECT BROADCAST — this was completely broken before
+                io.emit('user-status-updated', {
+                    userId: user.id,
+                    isOnline: false,
+                    lastSeen: finalLastSeen.toISOString(),
+                    lastSeenText: formatLastSeen(finalLastSeen)
+                });
 
-                    console.log(`❌ User disconnected: ${user.name} (ID: ${user.id})`);
-                } else {
-                    console.log(`✅ User ${user.id} reconnected, keeping online status`);
+                console.log(`User fully offline: ${user.name} (${user.id}) → ${formatLastSeen(finalLastSeen)}`);
+            } else {
+                console.log(`User ${user.id} reconnected with new socket → staying online`);
+            }
+        }, 10000); // 10 seconds grace period (better than 3s)
+
+        // Immediate cleanup (typing + group calls) — this part was already correct
+        roomsArray.forEach(roomId => {
+            if (roomId !== socket.id) {
+                socket.to(roomId).emit('group-stop-typing', {
+                    groupId: roomId,
+                    id: user.id,
+                    username: user.name
+                });
+            }
+        });
+
+        activeGroupCalls.forEach((groupCall, groupId) => {
+            if (groupCall.participants.has(user.id)) {
+                groupCall.participants.delete(user.id);
+                const groupCallRoom = `group-call-${groupId}`;
+                socket.to(groupCallRoom).emit('group-participant-left', { userId: user.id });
+
+                if (groupCall.participants.size === 0) {
+                    activeGroupCalls.delete(groupId);
+                    io.to(groupCallRoom).emit('group-call-ended');
                 }
-            }, 3000); // 3 second grace period
-
-            // Clean up typing indicators immediately
-            roomsArray.forEach(roomId => {
-                if (roomId !== socket.id) {
-                    socket.to(roomId).emit('group-stop-typing', {
-                        groupId: roomId,
-                        id: user.id,
-                        username: user.name
-                    });
-                }
-            });
-
-            // Clean up group calls immediately
-            activeGroupCalls.forEach((groupCall, groupId) => {
-                if (groupCall.participants.has(user.id)) {
-                    groupCall.participants.delete(user.id);
-
-                    const groupCallRoom = `group-call-${groupId}`;
-                    socket.to(groupCallRoom).emit('group-participant-left', {
-                        userId: user.id
-                    });
-
-                    console.log(`🔚 User ${user.id} removed from group call ${groupId} due to disconnect`);
-
-                    if (groupCall.participants.size === 0) {
-                        activeGroupCalls.delete(groupId);
-                        io.to(groupCallRoom).emit('group-call-ended');
-                        console.log(`🔚 Group call ${groupId} ended (no participants after disconnect)`);
-                    }
-                }
-            });
-        }
+            }
+        });
     });
 });
 
