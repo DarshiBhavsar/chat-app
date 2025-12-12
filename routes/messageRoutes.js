@@ -118,4 +118,24 @@ router.get('/status/:messageId', authenticateToken, getMessageStatus);
 router.post('/status-batch', authenticateToken, batchStatusCheck);
 router.put('/status-update/:messageId', authenticateToken, updateMessageStatusRealTime);
 
+// ADD THIS AT THE END OF messageRoutes.js (after all other routes)
+router.get('/media/:public_id', authenticateToken, async (req, res) => {
+    try {
+        const { public_id } = req.params;
+        const { resource_type = 'image' } = req.query;
+
+        const url = cloudinary.url(public_id, {
+            resource_type,
+            type: 'private',
+            secure: true,
+            sign_url: true,
+            expires_at: Math.floor(Date.now() / 1000) + 3600, // 1 hour
+        });
+
+        res.json({ url });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load media' });
+    }
+});
+
 module.exports = router;
