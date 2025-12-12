@@ -42,20 +42,13 @@ router.post('/group/send', authenticateToken, sendGroupMessage);
 //     res.status(200).json({ imageUrls });
 // });
 
-// For images (update your /upload-image route)
 router.post('/upload-image', authenticateToken, upload.array('image'), (req, res) => {
-    if (!req.files || req.files.length === 0) {
-        return res.status(400).json({ message: 'No image uploaded' });
-    }
+    if (!req.files) return res.status(400).json({ error: 'No files' });
 
-    // Return PUBLIC_ID, not full path
-    const publicIds = req.files.map(file => {
-        // Extract public_id from file.path or file.public_id
-        return file.public_id || file.path.split('/').pop()?.split('.')[0]; // e.g., "img-123456"
-    });
+    const publicIds = req.files.map(file => file.filename); // e.g., "image-1765532856678-417428280"
 
-    console.log('✅ Image public_ids:', publicIds);
-    res.status(200).json({ imageUrls: publicIds }); // Send IDs, not URLs
+    console.log('Uploaded image IDs:', publicIds);
+    res.json({ imageUrls: publicIds }); // ← ONLY filename, NOT full URL
 });
 
 router.post('/upload-document', authenticateToken, uploadDocument.array('document', 5), (req, res) => {
