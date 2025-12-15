@@ -9,15 +9,12 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Configure Cloudinary storage 
+// Configure Cloudinary storage
 const storage = new CloudinaryStorage({
     cloudinary: cloudinary,
     params: {
         folder: 'chat-app-uploads', // Folder name in Cloudinary
         allowed_formats: ['jpeg', 'png', 'gif', 'jpg'],
-        type: 'private',                    // ADD
-        access_mode: 'authenticated',       // ADD
-        resource_type: 'image',
         transformation: [
             { width: 500, height: 500, crop: 'limit' }, // Auto-resize images
             { quality: 'auto' } // Auto-optimize quality
